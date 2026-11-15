@@ -454,15 +454,21 @@ export default function MediaPanel({
                               </p>
                             ) : (
                               <video
+                                key={item.id}
                                 src={item.url}
                                 controls
                                 autoPlay
                                 playsInline
                                 onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
+                                onLoadedMetadata={(e) => {
+                                  e.currentTarget.muted = false;
+                                  e.currentTarget.volume = 1.0;
+                                }}
                                 onWaiting={() => setPreviewBuffering(true)}
                                 onCanPlay={(e) => {
                                   setPreviewBuffering(false);
                                   e.currentTarget.muted = false;
+                                  e.currentTarget.volume = 1.0;
                                   e.currentTarget.play().catch(() => {});
                                 }}
                                 onPlaying={() => setPreviewBuffering(false)}
