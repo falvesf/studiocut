@@ -202,8 +202,11 @@ export default function TransitionsPanel({
         <div>
           <h4 className="font-bold text-slate-300 text-xs flex items-center gap-1.5 mb-0.5">
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            Fade In / Fade Out do Trecho
+            Fade In / Fade Out do Trecho {selectedClip ? selectedClipIndex + 1 : ''}
           </h4>
+          <p className="text-[10px] text-slate-500">
+            Com áudio embutido: aplica fade no áudio. Sem áudio / extraído: entra e sai escurecendo (preto).
+          </p>
         </div>
 
         {/* Fade In */}
@@ -218,8 +221,8 @@ export default function TransitionsPanel({
           <input
             type="range"
             min="0"
-            max="3"
-            step="0.5"
+            max="5"
+            step="0.1"
             value={clipFadeIn}
             onChange={(e) => updateClipFade({ fadeIn: parseFloat(e.target.value) })}
             className="w-full accent-indigo-500 cursor-pointer"
@@ -238,8 +241,8 @@ export default function TransitionsPanel({
           <input
             type="range"
             min="0"
-            max="3"
-            step="0.5"
+            max="5"
+            step="0.1"
             value={clipFadeOut}
             onChange={(e) => updateClipFade({ fadeOut: parseFloat(e.target.value) })}
             className="w-full accent-indigo-500 cursor-pointer"

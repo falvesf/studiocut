@@ -674,13 +674,21 @@ export function executeRender({
       }
 
       // Transitions & Per-Clip Fades
+      // If clip has embedded audio, fade controls audio; if audio was extracted/muted, fade controls video from/to black.
+      const clipHasEmbeddedAudio = !muteOriginal && !mutedTrackIds.has(c.trackId) && !c.muted && !c.audioExtracted;
       if (c.fadeIn > 0 && scaledDur > c.fadeIn) {
-        vFilters += `,fade=t=in:st=0:d=${c.fadeIn}`;
-        aFilters += `,afade=t=in:st=0:d=${c.fadeIn}`;
+        if (clipHasEmbeddedAudio) {
+          aFilters += `,afade=t=in:st=0:d=${c.fadeIn}`;
+        } else {
+          vFilters += `,fade=t=in:st=0:d=${c.fadeIn}`;
+        }
       }
       if (c.fadeOut > 0 && scaledDur > c.fadeOut) {
-        vFilters += `,fade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
-        aFilters += `,afade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
+        if (clipHasEmbeddedAudio) {
+          aFilters += `,afade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
+        } else {
+          vFilters += `,fade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
+        }
       }
 
       // Remove legacy fade-out/fade-in inline hacks when using real xfade transitions

@@ -115,13 +115,6 @@ export default function Player({
       videoRef.current.src = activeClip.videoUrl;
     }
 
-    // Imperatively enforce mute/volume (React's muted prop only sets defaultMuted)
-    const clipMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true || activeClip?.audioExtracted === true;
-    videoRef.current.muted = clipMuted;
-    videoRef.current.volume = clipMuted
-      ? 0
-      : Math.min(1, Math.max(0, activeClip?.volume !== undefined ? activeClip.volume : 1.0));
-
     // Set playback rate
     videoRef.current.playbackRate = activeClip.speed || 1.0;
 
@@ -129,6 +122,28 @@ export default function Player({
     const s = activeClip.timelineStart !== undefined ? activeClip.timelineStart : activeClip.start;
     const dur = (activeClip.end - activeClip.start) / (activeClip.speed || 1.0);
     const inRange = currentTime >= s && currentTime <= (s + dur);
+
+    // Imperatively enforce mute/volume (React's muted prop only sets defaultMuted)
+    // When clip has embedded audio, per-clip fadeIn/fadeOut controls its audio volume.
+    const clipMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true || activeClip?.audioExtracted === true;
+    const vFadeIn = activeClip?.fadeIn || 0;
+    const vFadeOut = activeClip?.fadeOut || 0;
+    const elapsedClip = Math.max(0, currentTime - s);
+    const remainingClip = Math.max(0, dur - elapsedClip);
+    let vFadeFactor = 1.0;
+    if (!clipMuted) {
+      if (vFadeIn > 0 && elapsedClip < vFadeIn) {
+        vFadeFactor *= Math.max(0, elapsedClip / vFadeIn);
+      }
+      if (vFadeOut > 0 && remainingClip < vFadeOut) {
+        vFadeFactor *= Math.max(0, remainingClip / vFadeOut);
+      }
+    }
+    const baseClipVol = activeClip?.volume !== undefined ? activeClip.volume : 1.0;
+    videoRef.current.muted = clipMuted;
+    videoRef.current.volume = clipMuted
+      ? 0
+      : Math.min(1, Math.max(0, baseClipVol * vFadeFactor));
 
     const isNewClip = prevClipIdRef.current !== activeClip.id;
     prevClipIdRef.current = activeClip.id;
@@ -151,7 +166,7 @@ export default function Player({
         videoRef.current.pause();
       }
     }
-  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.audioExtracted, activeClip?.volume, muteOriginal]);
+  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.audioExtracted, activeClip?.volume, activeClip?.fadeIn, activeClip?.fadeOut, muteOriginal]);
 
   // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
   useEffect(() => {
@@ -635,7 +650,22 @@ export default function Player({
                 src={activeClip?.videoUrl || videoUrl}
                 style={{
                   transform: `scale(${scaleRatio * trScale}) translate(${transX + trTranslateX}%, ${transY + trTranslateY}%)`,
-                  opacity: trOpacity,
+                  opacity: (() => {
+                    const isExtractedOrMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true || activeClip?.audioExtracted === true;
+                    if (!activeClip || !isExtractedOrMuted) return trOpacity;
+                    const cStart = activeClip.timelineStart !== undefined ? activeClip.timelineStart : activeClip.start;
+                    const cDur = Math.max(0.05, (activeClip.end - activeClip.start) / (activeClip.speed || 1.0));
+                    const cElapsed = Math.max(0, currentTime - cStart);
+                    const cRem = Math.max(0, cDur - cElapsed);
+                    let fadeOp = 1.0;
+                    if (activeClip.fadeIn > 0 && cElapsed < activeClip.fadeIn) {
+                      fadeOp *= Math.max(0, cElapsed / activeClip.fadeIn);
+                    }
+                    if (activeClip.fadeOut > 0 && cRem < activeClip.fadeOut) {
+                      fadeOp *= Math.max(0, cRem / activeClip.fadeOut);
+                    }
+                    return trOpacity * fadeOp;
+                  })(),
                   clipPath: trClipPath,
                   transition: trIsActive ? 'none' : 'transform 0.05s ease-out',
                   display: isCurrentTrackVisible ? 'block' : 'none',
