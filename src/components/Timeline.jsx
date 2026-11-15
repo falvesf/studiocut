@@ -1451,6 +1451,14 @@ export default function Timeline({
                           className={`group absolute top-0 bottom-0 rounded-md flex items-center justify-between transition pointer-events-auto cursor-grab active:cursor-grabbing ${
                             isBeingDragged
                               ? 'bg-gradient-to-r from-cyan-600 via-indigo-600 to-cyan-600 border-2 border-cyan-300 shadow-2xl opacity-95 scale-[1.02]'
+                              : clip.layerRole === 'logo'
+                              ? (isSelected
+                                  ? 'bg-gradient-to-r from-fuchsia-700 via-purple-600 to-fuchsia-700 border-2 border-fuchsia-300 shadow-lg shadow-fuchsia-600/40 z-20'
+                                  : 'bg-purple-900/70 hover:bg-purple-900/90 border border-fuchsia-500/60')
+                              : clip.layerRole === 'background'
+                              ? (isSelected
+                                  ? 'bg-gradient-to-r from-amber-700 via-orange-600 to-amber-700 border-2 border-amber-300 shadow-lg shadow-amber-600/40 z-20'
+                                  : 'bg-amber-950/70 hover:bg-amber-950/90 border border-amber-500/50')
                               : isSelected
                               ? 'bg-gradient-to-r from-indigo-700 via-indigo-600 to-indigo-700 border-2 border-indigo-400 shadow-lg shadow-indigo-600/40 z-20'
                               : 'bg-slate-800 hover:bg-slate-750 border border-slate-650'
@@ -1477,6 +1485,16 @@ export default function Timeline({
                             <div className="flex items-center justify-between text-[10px]">
                               <div className="flex items-center gap-1 min-w-0">
                                 <Move className="w-2.5 h-2.5 text-slate-400 opacity-60 shrink-0" />
+                                {clip.layerRole === 'logo' && (
+                                  <span className="px-1 rounded bg-fuchsia-500/40 text-fuchsia-100 font-bold text-[8px] shrink-0">
+                                    Logo
+                                  </span>
+                                )}
+                                {clip.layerRole === 'background' && (
+                                  <span className="px-1 rounded bg-amber-500/40 text-amber-100 font-bold text-[8px] shrink-0">
+                                    Fundo
+                                  </span>
+                                )}
                                 <span className="font-bold text-white truncate text-[10px]">
                                   {clip.videoName ? clip.videoName.slice(0, 16) : `Trecho`}
                                 </span>

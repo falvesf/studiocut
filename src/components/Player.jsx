@@ -53,7 +53,7 @@ export default function Player({
     ? (isVideoVertical ? '9:16' : '16:9')
     : targetAspect;
 
-  // Find active clip at current project time: top visible track wins
+  // Find active main video clip, background clip, and logo overlay clips at current project time
   const visibleTracks = tracks.filter(t => t.visible !== false);
   const reversedVisible = [...visibleTracks].reverse();
 
@@ -61,6 +61,7 @@ export default function Player({
   for (const t of reversedVisible) {
     const c = clips.find(clip => {
       if ((clip.trackId || 'track_1') !== t.id) return false;
+      if (clip.layerRole === 'background' || clip.layerRole === 'logo') return false;
       const s = clip.timelineStart !== undefined ? clip.timelineStart : clip.start;
       const dur = (clip.end - clip.start) / (clip.speed || 1.0);
       return currentTime >= s && currentTime < (s + dur);
@@ -71,7 +72,27 @@ export default function Player({
     }
   }
 
-  const activeClip = activeClipAtTime || clips[0];
+  const mainClipsFallback = clips.filter(c => c.layerRole !== 'background' && c.layerRole !== 'logo');
+  const activeClip = activeClipAtTime || mainClipsFallback[0] || clips[0];
+
+  const isClipActiveAtNow = (clip) => {
+    const s = clip.timelineStart !== undefined ? clip.timelineStart : (clip.start || 0);
+    const dur = (clip.end - clip.start) / (clip.speed || 1.0);
+    return currentTime >= s && currentTime < (s + dur);
+  };
+
+  const visibleTrackIds = new Set(visibleTracks.map(t => t.id));
+  const activeBgClip = clips.find(c =>
+    c.layerRole === 'background' &&
+    visibleTrackIds.has(c.trackId || 'track_1') &&
+    isClipActiveAtNow(c)
+  ) || null;
+
+  const activeLogoClips = clips.filter(c =>
+    c.layerRole === 'logo' &&
+    visibleTrackIds.has(c.trackId || 'track_1') &&
+    isClipActiveAtNow(c)
+  );
 
   // Active subtitle
   const activeSub = subtitles.find(
@@ -620,12 +641,12 @@ export default function Player({
           style={aspectStyle}
           className="max-h-full max-w-full h-auto w-auto relative flex items-center justify-center rounded-xl overflow-hidden border border-slate-800 shadow-2xl bg-black"
         >
-          {/* Layer 1: Background Layer (Fundo / Camada Inferior) */}
-          {backgroundLayer?.url && (
+          {/* Layer 1: Background Layer (Timeline Fundo clip OR legacy backgroundLayer) */}
+          {(activeBgClip?.videoUrl || backgroundLayer?.url) && (
             <div className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-none">
-              {backgroundLayer.type === 'video' ? (
+              {(activeBgClip ? activeBgClip.clipType === 'video' : backgroundLayer?.type === 'video') ? (
                 <video
-                  src={backgroundLayer.url}
+                  src={activeBgClip?.videoUrl || backgroundLayer.url}
                   autoPlay
                   loop
                   muted
@@ -634,7 +655,7 @@ export default function Player({
                 />
               ) : (
                 <img
-                  src={backgroundLayer.url}
+                  src={activeBgClip?.videoUrl || backgroundLayer.url}
                   alt="Fundo"
                   className="w-full h-full object-cover"
                 />
@@ -703,8 +724,32 @@ export default function Player({
                 </div>
               )}
 
-              {/* Logo / Image Overlay Live Preview (Layer 3 - Top) */}
-              {logoOverlay?.enabled && logoOverlay?.url && (
+              {/* Logo / Image Overlay Live Preview (Timeline Logo clips OR legacy logoOverlay) */}
+              {activeLogoClips.length > 0 ? (
+                activeLogoClips.map((lc) => {
+                  let lcPos = 'top-4 right-4';
+                  if (lc.position === 'top-left') lcPos = 'top-4 left-4';
+                  else if (lc.position === 'bottom-right') lcPos = 'bottom-6 right-4';
+                  else if (lc.position === 'bottom-left') lcPos = 'bottom-6 left-4';
+                  else if (lc.position === 'center') lcPos = 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2';
+                  return (
+                    <div
+                      key={lc.id}
+                      className={`absolute ${lcPos} pointer-events-none z-20`}
+                      style={{
+                        width: `${lc.scale || 15}%`,
+                        opacity: (lc.opacity ?? 100) / 100
+                      }}
+                    >
+                      <img
+                        src={lc.videoUrl}
+                        alt={lc.videoName || 'Logo'}
+                        className="w-full h-auto object-contain drop-shadow-md"
+                      />
+                    </div>
+                  );
+                })
+              ) : logoOverlay?.enabled && logoOverlay?.url ? (
                 <div
                   className={`absolute ${logoPosClass} pointer-events-none z-20`}
                   style={{
@@ -718,7 +763,7 @@ export default function Player({
                     className="w-full h-auto object-contain drop-shadow-md"
                   />
                 </div>
-              )}
+              ) : null}
 
               {/* Subtitle Overlay Live Preview */}
               {activeSub && (

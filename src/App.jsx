@@ -648,17 +648,76 @@ export default function App() {
     }
   };
 
+  const getProjectSpanDuration = () => {
+    const clipEnds = clips.map(c => (c.timelineStart || 0) + ((c.end - c.start) / (c.speed || 1.0)));
+    return Math.max(duration || 0, ...clipEnds, 10);
+  };
+
   const handleSetBackgroundLayer = (mediaItem) => {
     if (!mediaItem) {
       setBackgroundLayer(null);
+      setClips(prev => prev.filter(c => c.layerRole !== 'background'));
       return;
     }
-    setBackgroundLayer({
-      path: mediaItem.path,
-      url: mediaItem.url,
-      name: mediaItem.name,
-      type: mediaItem.type
-    });
+
+    const totalDur = getProjectSpanDuration();
+    const bottomTrackId = tracks[0]?.id || 'track_1';
+    const bottomHasNonBg = clips.some(c => (c.trackId || 'track_1') === bottomTrackId && c.layerRole !== 'background');
+
+    let nextTracks = [...tracks];
+    let shiftedClips = [...clips];
+
+    if (bottomHasNonBg) {
+      // Shift all existing tracks' clips up by +1 track so Faixa 1 is exclusive for the background
+      const maxUsedIdx = clips.reduce((acc, c) => {
+        const idx = nextTracks.findIndex(t => t.id === (c.trackId || 'track_1'));
+        return Math.max(acc, idx >= 0 ? idx : 0);
+      }, 0);
+
+      while (nextTracks.length <= maxUsedIdx + 1) {
+        nextTracks.push({
+          id: `track_${Date.now()}_${nextTracks.length + 1}`,
+          name: `Faixa ${nextTracks.length + 1}`,
+          visible: true,
+          muted: false,
+          locked: false
+        });
+      }
+
+      shiftedClips = clips.map(c => {
+        const idx = nextTracks.findIndex(t => t.id === (c.trackId || 'track_1'));
+        const targetTrack = nextTracks[(idx >= 0 ? idx : 0) + 1];
+        return targetTrack ? { ...c, trackId: targetTrack.id } : c;
+      });
+    }
+
+    const bgClip = {
+      id: `bg_${Date.now()}`,
+      trackId: nextTracks[0].id,
+      videoPath: mediaItem.path,
+      videoUrl: mediaItem.url,
+      videoName: mediaItem.name || 'Fundo',
+      clipType: mediaItem.type === 'video' ? 'video' : 'image',
+      layerRole: 'background',
+      start: 0,
+      end: totalDur,
+      maxDuration: Math.max(totalDur * 3, 600),
+      timelineStart: 0,
+      speed: 1.0,
+      scale: 100,
+      posX: 0,
+      posY: 0,
+      muted: true,
+      transitionToNext: 'none'
+    };
+
+    const nextClips = [...shiftedClips, bgClip];
+    setTracks(nextTracks);
+    setClips(nextClips);
+    setSelectedAudioClipId(null);
+    setSelectedClipId(bgClip.id);
+    setBackgroundLayer(null);
+    pushHistory(nextClips, nextTracks, bgClip.id);
     setActiveTab('transform');
   };
 
@@ -694,15 +753,43 @@ export default function App() {
   };
 
   const handleSetLogoOverlay = (mediaItem) => {
-    setLogoOverlay({
-      enabled: true,
-      path: mediaItem.path,
-      url: mediaItem.url,
-      name: mediaItem.name,
+    const totalDur = getProjectSpanDuration();
+    const newTrack = {
+      id: `track_${Date.now()}`,
+      name: `Faixa ${tracks.length + 1}`,
+      visible: true,
+      muted: false,
+      locked: false
+    };
+    const logoClip = {
+      id: `logo_${Date.now()}`,
+      trackId: newTrack.id,
+      videoPath: mediaItem.path,
+      videoUrl: mediaItem.url,
+      videoName: mediaItem.name || 'Logo',
+      clipType: 'image',
+      layerRole: 'logo',
       position: 'top-right',
       scale: 15,
-      opacity: 100
-    });
+      opacity: 100,
+      start: 0,
+      end: totalDur,
+      maxDuration: Math.max(totalDur * 3, 600),
+      timelineStart: 0,
+      speed: 1.0,
+      posX: 0,
+      posY: 0,
+      muted: true,
+      transitionToNext: 'none'
+    };
+    const nextTracks = [...tracks, newTrack];
+    const nextClips = [...clips, logoClip];
+    setTracks(nextTracks);
+    setClips(nextClips);
+    setSelectedAudioClipId(null);
+    setSelectedClipId(logoClip.id);
+    setLogoOverlay(prev => ({ ...prev, enabled: false }));
+    pushHistory(nextClips, nextTracks, logoClip.id);
     setActiveTab('overlay');
   };
 
@@ -925,6 +1012,10 @@ export default function App() {
               <OverlayPanel
                 logoOverlay={logoOverlay}
                 setLogoOverlay={setLogoOverlay}
+                clips={clips}
+                setClips={setClips}
+                selectedClipId={selectedClipId}
+                onAddLogoMedia={handleSetLogoOverlay}
               />
             )}
 

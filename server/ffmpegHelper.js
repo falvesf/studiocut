@@ -522,16 +522,20 @@ export function executeRender({
     const hiddenTrackIds = new Set((tracks || []).filter(t => t.visible === false).map(t => t.id));
     const mutedTrackIds = new Set((tracks || []).filter(t => t.muted === true).map(t => t.id));
 
-    let activeClips = [];
+    let allTimelineClips = [];
     if (clips && clips.length > 0) {
-      activeClips = clips
+      allTimelineClips = clips
         .filter(c => c.end > c.start && !hiddenTrackIds.has(c.trackId))
         .sort((a, b) => (a.timelineStart || 0) - (b.timelineStart || 0));
     } else if (trim) {
-      activeClips = [{ start: trim.start || 0, end: trim.end || totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
+      allTimelineClips = [{ start: trim.start || 0, end: trim.end || totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
     } else {
-      activeClips = [{ start: 0, end: totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
+      allTimelineClips = [{ start: 0, end: totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
     }
+
+    const bgTimelineClips = allTimelineClips.filter(c => c.layerRole === 'background' && c.videoPath && fs.existsSync(c.videoPath));
+    const logoTimelineClips = allTimelineClips.filter(c => c.layerRole === 'logo' && c.videoPath && fs.existsSync(c.videoPath));
+    const activeClips = allTimelineClips.filter(c => c.layerRole !== 'background' && c.layerRole !== 'logo');
 
     // Collect all unique video inputs
     const uniqueVideos = [];
@@ -570,8 +574,19 @@ export function executeRender({
     });
 
     // Background Layer input index (Layer 1 - Bottom)
+    const bgTimelineInputIndices = [];
+    bgTimelineClips.forEach((bc) => {
+      bgTimelineInputIndices.push(nextInputIdx++);
+      if (bc.clipType === 'video') {
+        args.push('-stream_loop', '-1');
+      } else {
+        args.push('-loop', '1');
+      }
+      args.push('-i', bc.videoPath);
+    });
+
     let bgInputIdx = -1;
-    if (backgroundLayer && backgroundLayer.path && fs.existsSync(backgroundLayer.path)) {
+    if (bgTimelineClips.length === 0 && backgroundLayer && backgroundLayer.path && fs.existsSync(backgroundLayer.path)) {
       bgInputIdx = nextInputIdx++;
       if (backgroundLayer.type === 'video') {
         args.push('-stream_loop', '-1');
@@ -582,8 +597,14 @@ export function executeRender({
     }
 
     // Image/Logo input index (Layer 3 - Top)
+    const logoTimelineInputIndices = [];
+    logoTimelineClips.forEach((lc) => {
+      logoTimelineInputIndices.push(nextInputIdx++);
+      args.push('-loop', '1', '-i', lc.videoPath);
+    });
+
     let logoInputIdx = -1;
-    if (logoOverlay && logoOverlay.path && fs.existsSync(logoOverlay.path)) {
+    if (logoTimelineClips.length === 0 && logoOverlay && logoOverlay.path && fs.existsSync(logoOverlay.path)) {
       logoInputIdx = nextInputIdx++;
       args.push('-i', logoOverlay.path);
     }
@@ -648,9 +669,10 @@ export function executeRender({
         // 2. Crop excess if larger than canvas (offset by posX, posY)
         vFilters += `,crop=min(in_w\\,${canvasW}):min(in_h\\,${canvasH}):max(0\\,min(in_w-${canvasW}\\,(in_w-${canvasW})/2-(${posX}*in_w))):max(0\\,min(in_h-${canvasH}\\,(in_h-${canvasH})/2-(${posY}*in_h)))`;
 
-        // 3. Pad to canvas if smaller than canvas (transparent if bgLayer, else black)
-        const padColor = bgInputIdx !== -1 ? 'color=black@0' : 'black';
-        const formatStr = bgInputIdx !== -1 ? ',format=rgba' : '';
+        // 3. Pad to canvas if smaller than canvas (transparent if bgLayer or bgTimelineClips, else black)
+        const hasAnyBg = bgInputIdx !== -1 || bgTimelineClips.length > 0;
+        const padColor = hasAnyBg ? 'color=black@0' : 'black';
+        const formatStr = hasAnyBg ? ',format=rgba' : '';
         vFilters += `${formatStr},pad=${canvasW}:${canvasH}:(${canvasW}-iw)/2+(${posX}*${canvasW}):(${canvasH}-ih)/2+(${posY}*${canvasH}):${padColor},setsar=1`;
       } else if (scaleVal > 100) {
         vFilters += `,scale=iw*${factor}:ih*${factor}:flags=lanczos,crop=iw/${factor}:ih/${factor}:(iw-iw/${factor})/2+(${posX}*iw):(ih-ih/${factor})/2+(${posY}*ih),setsar=1`;
@@ -817,8 +839,24 @@ export function executeRender({
       currentVTarget = 'finalv';
     }
 
-    // Background Layer (Layer 1 - Bottom)
-    if (bgInputIdx !== -1) {
+    // Background Layer (Timeline Fundo clips OR legacy backgroundLayer)
+    if (bgTimelineClips.length > 0) {
+      const targetW = canvasW || 1920;
+      const targetH = canvasH || 1080;
+      filterParts.push(`color=c=black:s=${targetW}x${targetH}:d=${effectiveDuration}[bgBase]`);
+      let curBg = 'bgBase';
+      bgTimelineClips.forEach((bc, idx) => {
+        const inIdx = bgTimelineInputIndices[idx];
+        const bStart = Math.max(0, bc.timelineStart || 0);
+        const bDur = Math.max(0.1, (bc.end - bc.start) / (bc.speed || 1.0));
+        const bEnd = bStart + bDur;
+        filterParts.push(`[${inIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}[bgTl${idx}]`);
+        filterParts.push(`[${curBg}][bgTl${idx}]overlay=0:0:enable='between(t,${bStart.toFixed(3)},${bEnd.toFixed(3)})':shortest=1[bgMix${idx}]`);
+        curBg = `bgMix${idx}`;
+      });
+      filterParts.push(`[${curBg}][${currentVTarget}]overlay=0:0:shortest=1[vWithBg]`);
+      currentVTarget = 'vWithBg';
+    } else if (bgInputIdx !== -1) {
       const targetW = canvasW || 1920;
       const targetH = canvasH || 1080;
       filterParts.push(`[${bgInputIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}[bgScaled]`);
@@ -826,8 +864,25 @@ export function executeRender({
       currentVTarget = 'vWithBg';
     }
 
-    // Logo / Image Overlay (Layer 3 - Top)
-    if (logoInputIdx !== -1) {
+    // Logo / Image Overlay (Timeline Logo clips OR legacy logoOverlay)
+    if (logoTimelineClips.length > 0) {
+      logoTimelineClips.forEach((lc, idx) => {
+        const inIdx = logoTimelineInputIndices[idx];
+        const lStart = Math.max(0, lc.timelineStart || 0);
+        const lDur = Math.max(0.1, (lc.end - lc.start) / (lc.speed || 1.0));
+        const lEnd = lStart + lDur;
+        const scalePct = (lc.scale || 15) / 100;
+        const opacityVal = (lc.opacity ?? 100) / 100;
+        filterParts.push(`[${inIdx}:v]scale=iw*${scalePct}:-1,format=rgba,colorchannelmixer=aa=${opacityVal}[logoTl${idx}]`);
+        let overlayPos = 'W-w-30:30';
+        if (lc.position === 'top-left') overlayPos = '30:30';
+        else if (lc.position === 'bottom-right') overlayPos = 'W-w-30:H-h-30';
+        else if (lc.position === 'bottom-left') overlayPos = '30:H-h-30';
+        else if (lc.position === 'center') overlayPos = '(W-w)/2:(H-h)/2';
+        filterParts.push(`[${currentVTarget}][logoTl${idx}]overlay=${overlayPos}:enable='between(t,${lStart.toFixed(3)},${lEnd.toFixed(3)})':shortest=1[vWithLogo${idx}]`);
+        currentVTarget = `vWithLogo${idx}`;
+      });
+    } else if (logoInputIdx !== -1) {
       const scalePct = (logoOverlay.scale || 15) / 100;
       const opacityVal = (logoOverlay.opacity || 100) / 100;
       filterParts.push(`[${logoInputIdx}:v]scale=iw*${scalePct}:-1,format=rgba,colorchannelmixer=aa=${opacityVal}[logoScaled]`);

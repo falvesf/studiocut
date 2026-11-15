@@ -4,10 +4,39 @@ import { useDialog } from './DialogProvider.jsx';
 
 export default function OverlayPanel({
   logoOverlay,
-  setLogoOverlay
+  setLogoOverlay,
+  clips = [],
+  setClips = () => {},
+  selectedClipId = null,
+  onAddLogoMedia = null
 }) {
   const fileInputRef = useRef(null);
   const { showAlert } = useDialog();
+
+  const selectedLogoClip =
+    clips.find(c => c.id === selectedClipId && c.layerRole === 'logo') ||
+    clips.find(c => c.layerRole === 'logo') ||
+    null;
+
+  const activeLogo = selectedLogoClip
+    ? {
+        enabled: true,
+        url: selectedLogoClip.videoUrl,
+        path: selectedLogoClip.videoPath,
+        name: selectedLogoClip.videoName,
+        position: selectedLogoClip.position || 'top-right',
+        scale: selectedLogoClip.scale || 15,
+        opacity: selectedLogoClip.opacity ?? 100
+      }
+    : logoOverlay;
+
+  const updateActiveLogo = (fields) => {
+    if (selectedLogoClip) {
+      setClips(prev => prev.map(c => c.id === selectedLogoClip.id ? { ...c, ...fields } : c));
+    } else {
+      setLogoOverlay(prev => ({ ...prev, ...fields }));
+    }
+  };
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -23,13 +52,22 @@ export default function OverlayPanel({
       });
       const data = await res.json();
       if (data.success) {
-        setLogoOverlay(prev => ({
-          ...prev,
-          enabled: true,
-          name: data.originalName,
-          path: data.path,
-          url: data.url
-        }));
+        if (onAddLogoMedia) {
+          onAddLogoMedia({
+            name: data.originalName,
+            path: data.path,
+            url: data.url,
+            type: 'image'
+          });
+        } else {
+          setLogoOverlay(prev => ({
+            ...prev,
+            enabled: true,
+            name: data.originalName,
+            path: data.path,
+            url: data.url
+          }));
+        }
       }
     } catch (err) {
       showAlert('Erro ao enviar imagem: ' + err.message);
@@ -75,24 +113,30 @@ export default function OverlayPanel({
         </div>
 
         {/* Upload or change Image */}
-        {logoOverlay.url ? (
+        {activeLogo?.url ? (
           <div className="p-3 bg-slate-800/80 rounded-lg border border-slate-700 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 bg-black/50 rounded-lg border border-slate-600 flex items-center justify-center overflow-hidden p-1">
                 <img
-                  src={logoOverlay.url}
+                  src={activeLogo.url}
                   alt="Logo"
                   className="max-w-full max-h-full object-contain"
                 />
               </div>
               <div className="truncate max-w-[170px]">
-                <p className="font-semibold text-slate-200 truncate">{logoOverlay.name || 'Imagem Carregada'}</p>
-                <p className="text-[10px] text-slate-400">Ativa no projeto</p>
+                <p className="font-semibold text-slate-200 truncate">{activeLogo.name || 'Imagem Carregada'}</p>
+                <p className="text-[10px] text-slate-400">{selectedLogoClip ? 'Na timeline (ajustável)' : 'Ativa no projeto'}</p>
               </div>
             </div>
 
             <button
-              onClick={() => setLogoOverlay(prev => ({ ...prev, url: '', path: '', enabled: false }))}
+              onClick={() => {
+                if (selectedLogoClip) {
+                  setClips(prev => prev.filter(c => c.id !== selectedLogoClip.id));
+                } else {
+                  setLogoOverlay(prev => ({ ...prev, url: '', path: '', enabled: false }));
+                }
+              }}
               className="p-1.5 text-slate-400 hover:text-rose-400 cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
@@ -117,7 +161,7 @@ export default function OverlayPanel({
           </div>
         )}
 
-        {logoOverlay.enabled && logoOverlay.url && (
+        {activeLogo?.enabled && activeLogo?.url && (
           <div className="space-y-3 pt-2 border-t border-slate-800">
             {/* Position Picker */}
             <div>
@@ -129,9 +173,9 @@ export default function OverlayPanel({
                 {positions.map(p => (
                   <button
                     key={p.id}
-                    onClick={() => setLogoOverlay(prev => ({ ...prev, position: p.id }))}
+                    onClick={() => updateActiveLogo({ position: p.id })}
                     className={`py-1 px-2 rounded text-[10px] font-semibold border transition cursor-pointer ${
-                      logoOverlay.position === p.id
+                      activeLogo.position === p.id
                         ? 'bg-indigo-600 text-white border-indigo-500 font-bold'
                         : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
                     }`}
@@ -146,15 +190,15 @@ export default function OverlayPanel({
             <div className="space-y-1">
               <div className="flex justify-between text-slate-400 text-[11px]">
                 <span>Tamanho / Escala da Logo</span>
-                <span className="font-mono text-indigo-300 font-bold">{logoOverlay.scale || 15}%</span>
+                <span className="font-mono text-indigo-300 font-bold">{activeLogo.scale || 15}%</span>
               </div>
               <input
                 type="range"
                 min="5"
                 max="40"
                 step="1"
-                value={logoOverlay.scale || 15}
-                onChange={(e) => setLogoOverlay(prev => ({ ...prev, scale: parseInt(e.target.value) }))}
+                value={activeLogo.scale || 15}
+                onChange={(e) => updateActiveLogo({ scale: parseInt(e.target.value) })}
                 className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
               />
             </div>
@@ -163,15 +207,15 @@ export default function OverlayPanel({
             <div className="space-y-1">
               <div className="flex justify-between text-slate-400 text-[11px]">
                 <span>Opacidade (Transparência)</span>
-                <span className="font-mono text-indigo-300 font-bold">{logoOverlay.opacity || 100}%</span>
+                <span className="font-mono text-indigo-300 font-bold">{activeLogo.opacity ?? 100}%</span>
               </div>
               <input
                 type="range"
                 min="10"
                 max="100"
                 step="5"
-                value={logoOverlay.opacity || 100}
-                onChange={(e) => setLogoOverlay(prev => ({ ...prev, opacity: parseInt(e.target.value) }))}
+                value={activeLogo.opacity ?? 100}
+                onChange={(e) => updateActiveLogo({ opacity: parseInt(e.target.value) })}
                 className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
               />
             </div>
