@@ -433,125 +433,123 @@ export default function MediaPanel({
                       </div>
                     </div>
 
-                    {stockType === 'audio' && (
-                      <div className="space-y-1.5">
-                        {previewAudioId === item.id ? (
-                          <div className="space-y-1">
-                            {previewBuffering && (
-                              <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>Carregando áudio em buffer...</span>
-                              </div>
-                            )}
-                            {previewError === item.id ? (
-                              <p className="text-[10px] text-rose-400">
-                                Prévia indisponível neste servidor externo.
-                              </p>
-                            ) : (
-                              <audio
-                                src={item.url}
-                                controls
-                                autoPlay
-                                onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
-                                onWaiting={() => setPreviewBuffering(true)}
-                                onCanPlay={() => setPreviewBuffering(false)}
-                                onPlaying={() => setPreviewBuffering(false)}
-                                onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
-                                className="w-full h-7"
-                              />
-                            )}
+                    {stockType === 'audio' && previewAudioId === item.id && (
+                      <div className="space-y-1">
+                        {previewBuffering && (
+                          <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>Carregando áudio em buffer...</span>
                           </div>
+                        )}
+                        {previewError === item.id ? (
+                          <p className="text-[10px] text-rose-400">
+                            Prévia indisponível neste servidor externo.
+                          </p>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPreviewError(null);
-                              setPreviewBuffering(true);
-                              setPreviewAudioId(item.id);
-                            }}
-                            className="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Play className="w-3 h-3 text-emerald-400" />
-                            Ouvir Prévia
-                          </button>
+                          <audio
+                            src={item.url}
+                            controls
+                            autoPlay
+                            onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
+                            onWaiting={() => setPreviewBuffering(true)}
+                            onCanPlay={() => setPreviewBuffering(false)}
+                            onPlaying={() => setPreviewBuffering(false)}
+                            onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
+                            className="w-full h-7"
+                          />
                         )}
                       </div>
                     )}
 
-                    {stockType === 'video' && (
-                      <div className="space-y-1.5">
-                        {previewVideoId === item.id ? (
-                          <div className="space-y-1">
-                            {previewBuffering && (
-                              <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>Carregando vídeo em buffer...</span>
-                              </div>
-                            )}
-                            {previewError === item.id ? (
-                              <p className="text-[10px] text-rose-400">
-                                Prévia indisponível neste formato/link.
-                              </p>
-                            ) : (
-                              <video
-                                key={item.id}
-                                src={item.url}
-                                controls
-                                autoPlay
-                                playsInline
-                                onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
-                                onLoadedMetadata={(e) => {
-                                  e.currentTarget.muted = false;
-                                  e.currentTarget.volume = 1.0;
-                                }}
-                                onWaiting={() => setPreviewBuffering(true)}
-                                onCanPlay={(e) => {
-                                  setPreviewBuffering(false);
-                                  e.currentTarget.muted = false;
-                                  e.currentTarget.volume = 1.0;
-                                  e.currentTarget.play().catch(() => {});
-                                }}
-                                onPlaying={() => setPreviewBuffering(false)}
-                                onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
-                                className="w-full max-h-40 rounded-lg bg-black border border-slate-700"
-                              />
-                            )}
+                    {stockType === 'video' && previewVideoId === item.id && (
+                      <div className="space-y-1">
+                        {previewBuffering && (
+                          <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>Carregando vídeo em buffer...</span>
                           </div>
+                        )}
+                        {previewError === item.id ? (
+                          <p className="text-[10px] text-rose-400">
+                            Prévia indisponível neste formato/link.
+                          </p>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPreviewError(null);
-                              setPreviewBuffering(true);
-                              setPreviewVideoId(item.id);
+                          <video
+                            key={item.id}
+                            src={item.url}
+                            controls
+                            autoPlay
+                            playsInline
+                            onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
+                            onLoadedMetadata={(e) => {
+                              e.currentTarget.muted = false;
+                              e.currentTarget.volume = 1.0;
                             }}
-                            className="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Play className="w-3 h-3 text-cyan-400" />
-                            Assistir Prévia
-                          </button>
+                            onWaiting={() => setPreviewBuffering(true)}
+                            onCanPlay={(e) => {
+                              setPreviewBuffering(false);
+                              e.currentTarget.muted = false;
+                              e.currentTarget.volume = 1.0;
+                              e.currentTarget.play().catch(() => {});
+                            }}
+                            onPlaying={() => setPreviewBuffering(false)}
+                            onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
+                            className="w-full max-h-40 rounded-lg bg-black border border-slate-700"
+                          />
                         )}
                       </div>
                     )}
 
-                    <button
-                      type="button"
-                      disabled={Boolean(importingStockId)}
-                      onClick={() => handleImportStock(item)}
-                      className="w-full py-1.5 px-2.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                    >
-                      {isImportingThis ? (
-                        <>
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          Baixando para o projeto...
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-3 h-3" />
-                          Baixar e Usar no Projeto
-                        </>
+                    <div className="flex items-center gap-1.5">
+                      {stockType === 'audio' && previewAudioId !== item.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewError(null);
+                            setPreviewBuffering(true);
+                            setPreviewAudioId(item.id);
+                          }}
+                          className="shrink-0 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer border border-slate-700/70"
+                        >
+                          <Play className="w-3 h-3 text-emerald-400" />
+                          Ouvir Prévia
+                        </button>
                       )}
-                    </button>
+
+                      {stockType === 'video' && previewVideoId !== item.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewError(null);
+                            setPreviewBuffering(true);
+                            setPreviewVideoId(item.id);
+                          }}
+                          className="shrink-0 py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer border border-slate-700/70"
+                        >
+                          <Play className="w-3 h-3 text-cyan-400" />
+                          Assistir Prévia
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={Boolean(importingStockId)}
+                        onClick={() => handleImportStock(item)}
+                        className="flex-1 min-w-0 py-1.5 px-2.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                      >
+                        {isImportingThis ? (
+                          <>
+                            <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                            <span className="truncate">Baixando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-3 h-3 shrink-0" />
+                            <span className="truncate">Baixar e Usar no Projeto</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 );
               })
