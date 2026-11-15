@@ -16,64 +16,88 @@ export default function MediaPanel({
   clips = []
 }) {
   const fileInputRef = useRef(null);
-  const { showConfirm } = useDialog();
+  const { showConfirm, showAlert } = useDialog();
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
-
-  // Load existing files from uploads directory on mount
-  const loadMedia = async () => {
-    try {
-      const res = await fetch('/api/media');
-      const data = await res.json();
-      if (data.success && data.media) {
-        setMediaList(data.media);
-      }
-    } catch (err) {
-      console.error('Erro ao listar mídias:', err);
-    }
-  };
-
-  useEffect(() => {
-    loadMedia();
-  }, []);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0 || uploading) return;
     setUploading(true);
 
+    const reusedNames = [];
+    const alreadyInProjectNames = [];
+
     for (const file of files) {
       try {
-        await uploadMediaWithProgress(file, setUploadStatus);
+        const data = await uploadMediaWithProgress(file, setUploadStatus);
+        if (data?.success) {
+          const existsInProject = mediaList.some(
+            (m) => m.url === data.url || m.path === data.path
+          );
+          if (existsInProject) {
+            alreadyInProjectNames.push(data.originalName || file.name);
+          } else {
+            const newMedia = {
+              id: `media_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              name: data.originalName || file.name,
+              filename: data.filename,
+              path: data.path,
+              url: data.url,
+              type: data.type || 'video',
+              duration: data.info?.duration || 0,
+              width: data.info?.width || 0,
+              height: data.info?.height || 0
+            };
+            setMediaList((prev) => {
+              if (prev.some((m) => m.url === newMedia.url || m.path === newMedia.path)) {
+                return prev;
+              }
+              return [newMedia, ...prev];
+            });
+            if (data.reused) {
+              reusedNames.push(data.originalName || file.name);
+            }
+          }
+        }
       } catch (err) {
         console.error('Erro no upload de mídia:', err);
+        showAlert('Erro ao importar mídia: ' + err.message);
       }
     }
 
-    await loadMedia();
     setUploadStatus(null);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+
+    if (alreadyInProjectNames.length > 0) {
+      showAlert({
+        title: 'Mídia já presente no projeto',
+        message: `O arquivo "${alreadyInProjectNames.join(', ')}" já estava disponível no banco de mídias deste projeto e não foi duplicado.`,
+        variant: 'info'
+      });
+    } else if (reusedNames.length > 0) {
+      showAlert({
+        title: 'Mídia reutilizada sem duplicidade',
+        message: `"${reusedNames.join(', ')}" já existia no servidor e foi vinculado a este projeto instantaneamente, sem recriar o arquivo na pasta uploads.`,
+        variant: 'success'
+      });
+    }
   };
 
-  const handleDeleteMedia = async (filename) => {
+  const handleDeleteMedia = async (item) => {
+    const label = item.name || item.filename || 'mídia';
     const confirmed = await showConfirm({
-      title: 'Remover Mídia',
-      message: `Deseja realmente remover o arquivo "${filename}" do banco de mídias?`,
+      title: 'Remover Mídia do Projeto',
+      message: `Deseja remover "${label}" do banco de mídias deste projeto?`,
       confirmText: 'Remover',
       cancelText: 'Cancelar',
       variant: 'danger'
     });
     if (!confirmed) return;
-    try {
-      const res = await fetch(`/api/media/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data.success) {
-        await loadMedia();
-      }
-    } catch (err) {
-      console.error('Erro ao excluir mídia:', err);
-    }
+    setMediaList((prev) =>
+      prev.filter((m) => m.id !== item.id && m.url !== item.url)
+    );
   };
 
   return (
@@ -82,20 +106,12 @@ export default function MediaPanel({
         <div>
           <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2 mb-0.5">
             <FolderPlus className="w-4 h-4 text-indigo-400" />
-            Banco de Mídias & Arquivos
+            Banco de Mídias do Projeto
           </h3>
           <p className="text-slate-400 text-[11px]">
-            Seus vídeos, fotos e áudios salvos no projeto.
+            Mídias exclusivas deste projeto (sem duplicar arquivos já importados).
           </p>
         </div>
-
-        <button
-          onClick={loadMedia}
-          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
-          title="Atualizar lista de arquivos"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       {/* Upload button */}
@@ -219,9 +235,9 @@ export default function MediaPanel({
                     </div>
 
                     <button
-                      onClick={() => handleDeleteMedia(item.filename)}
+                      onClick={() => handleDeleteMedia(item)}
                       className="p-1 rounded text-slate-600 hover:text-rose-400 hover:bg-rose-950/30 transition cursor-pointer"
-                      title="Excluir arquivo do disco"
+                      title="Remover mídia deste projeto"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

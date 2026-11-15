@@ -500,20 +500,26 @@ export default function App() {
         const dur = data.info?.duration || 0;
         setDuration(dur);
 
-        // Add to media pool
-        setMediaList(prev => [
-          ...prev,
-          {
-            id: `media_${Date.now()}`,
-            name: data.originalName,
-            path: data.path,
-            url: data.url,
-            type: 'video',
-            duration: dur,
-            width: data.info?.width || 0,
-            height: data.info?.height || 0
+        // Add to project media pool (avoid duplicates in this project)
+        setMediaList(prev => {
+          if (prev.some(m => m.url === data.url || m.path === data.path)) {
+            return prev;
           }
-        ]);
+          return [
+            ...prev,
+            {
+              id: `media_${Date.now()}`,
+              name: data.originalName,
+              filename: data.filename,
+              path: data.path,
+              url: data.url,
+              type: 'video',
+              duration: dur,
+              width: data.info?.width || 0,
+              height: data.info?.height || 0
+            }
+          ];
+        });
 
         const newClipId = `clip_${Date.now()}`;
         setClips([
@@ -540,6 +546,13 @@ export default function App() {
         setCurrentTime(0);
         setSubtitles([]);
         setSilences([]);
+        if (data.reused) {
+          showAlert({
+            title: 'Mídia Reutilizada',
+            message: `O arquivo "${data.originalName}" já havia sido importado antes e foi carregado instantaneamente sem duplicar na pasta uploads.`,
+            variant: 'success'
+          });
+        }
       } else {
         showAlert('Erro no envio do arquivo: ' + (data.error || 'Desconhecido'));
       }

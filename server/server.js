@@ -3,6 +3,7 @@ import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import {
   probeMedia,
@@ -185,6 +186,32 @@ app.delete('/api/media/:filename', (req, res) => {
 });
 
 const uploadProgressClients = new Map();
+const MEDIA_INDEX_FILE = path.join(UPLOADS_DIR, '_media_index.json');
+
+function loadMediaIndex() {
+  try {
+    if (fs.existsSync(MEDIA_INDEX_FILE)) {
+      return JSON.parse(fs.readFileSync(MEDIA_INDEX_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function saveMediaIndex(index) {
+  try {
+    fs.writeFileSync(MEDIA_INDEX_FILE, JSON.stringify(index, null, 2), 'utf8');
+  } catch (e) {}
+}
+
+function computeFileHash(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
 
 function sendUploadProgress(uploadId, payload) {
   if (!uploadId) return;
@@ -230,6 +257,29 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
     let filePath = req.file.path;
     let filename = req.file.filename;
+
+    // Deduplication check by SHA-256 hash
+    const fileHash = await computeFileHash(filePath);
+    const mediaIndex = loadMediaIndex();
+    const cached = mediaIndex[fileHash];
+    if (cached && cached.path && fs.existsSync(cached.path)) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (e) {}
+      console.log(`[Upload] Arquivo duplicado detectado (hash ${fileHash.slice(0, 8)}). Reutilizando: ${cached.filename}`);
+      sendUploadProgress(uploadId, {
+        stage: 'done',
+        percent: 100,
+        message: 'Mídia já importada anteriormente! Reutilizando arquivo sem duplicar.'
+      });
+      return res.json({
+        ...cached,
+        success: true,
+        reused: true,
+        originalName: originalUtf8 || cached.originalName
+      });
+    }
+
     let info = await probeMedia(filePath);
 
     const ext = path.extname(filename).toLowerCase();
@@ -278,6 +328,10 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
           info.duration || 0
         );
         if (fs.existsSync(webPath) && fs.statSync(webPath).size > 1000) {
+          // Remove raw incompatible original so uploads/ doesn't keep duplicate raw+web copies
+          try {
+            if (filePath !== webPath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          } catch (e) {}
           filePath = webPath;
           filename = webFilename;
           info = await probeMedia(webPath);
@@ -288,14 +342,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       }
     }
 
-    sendUploadProgress(uploadId, {
-      stage: 'done',
-      percent: 100,
-      message: 'Vídeo pronto no player!'
-    });
-
-    res.json({
+    const resultPayload = {
       success: true,
+      reused: false,
       filename,
       originalName: originalUtf8,
       path: filePath,
@@ -303,7 +352,18 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       type,
       size: fs.statSync(filePath).size,
       info
+    };
+
+    mediaIndex[fileHash] = resultPayload;
+    saveMediaIndex(mediaIndex);
+
+    sendUploadProgress(uploadId, {
+      stage: 'done',
+      percent: 100,
+      message: 'Vídeo pronto no player!'
     });
+
+    res.json(resultPayload);
   } catch (err) {
     console.error('Erro no upload/probe:', err);
     sendUploadProgress(uploadId, { stage: 'error', message: err.message });
