@@ -502,6 +502,7 @@ export function executeRender({
   audioFadeIn = 0,
   audioFadeOut = 0,
   audioTrack = null,
+  audioClips = [],
   audioVolume = 1.0,
   audioLoop = false,
   enhancement = 'none',
@@ -549,18 +550,29 @@ export function executeRender({
       videoInputMap[v] = idx;
     });
 
-    // Audio input index if audioTrack exists
+    let nextInputIdx = uniqueVideos.length;
+
+    // Active independent audio clips
+    const activeAudioClips = (audioClips || []).filter(ac => !ac.muted && ac.path && fs.existsSync(ac.path));
+
+    // Legacy audio input index if audioTrack exists and no audioClips
     let audioInputIdx = -1;
-    if (audioTrack && fs.existsSync(audioTrack)) {
-      audioInputIdx = uniqueVideos.length;
+    if (audioTrack && fs.existsSync(audioTrack) && activeAudioClips.length === 0) {
+      audioInputIdx = nextInputIdx++;
       if (audioLoop) args.push('-stream_loop', '-1');
       args.push('-i', audioTrack);
     }
 
+    const audioClipInputIndices = [];
+    activeAudioClips.forEach((ac) => {
+      audioClipInputIndices.push(nextInputIdx++);
+      args.push('-i', ac.path);
+    });
+
     // Background Layer input index (Layer 1 - Bottom)
     let bgInputIdx = -1;
     if (backgroundLayer && backgroundLayer.path && fs.existsSync(backgroundLayer.path)) {
-      bgInputIdx = uniqueVideos.length + (audioInputIdx !== -1 ? 1 : 0);
+      bgInputIdx = nextInputIdx++;
       if (backgroundLayer.type === 'video') {
         args.push('-stream_loop', '-1');
       } else {
@@ -572,7 +584,7 @@ export function executeRender({
     // Image/Logo input index (Layer 3 - Top)
     let logoInputIdx = -1;
     if (logoOverlay && logoOverlay.path && fs.existsSync(logoOverlay.path)) {
-      logoInputIdx = uniqueVideos.length + (audioInputIdx !== -1 ? 1 : 0) + (bgInputIdx !== -1 ? 1 : 0);
+      logoInputIdx = nextInputIdx++;
       args.push('-i', logoOverlay.path);
     }
 
@@ -838,7 +850,46 @@ export function executeRender({
       currentATarget = 'aorig';
     }
 
-    if (audioInputIdx !== -1 && hasOriginalAudio) {
+    // Independent Audio Clips Pipeline
+    const audioClipLabels = [];
+    activeAudioClips.forEach((ac, idx) => {
+      const inIdx = audioClipInputIndices[idx];
+      const aStart = Math.max(0, ac.start || 0);
+      const aEnd = ac.end || ac.duration || 0;
+      const aSpeed = Math.max(0.5, Math.min(2.0, ac.speed || 1.0));
+      const aVol = ac.volume !== undefined ? ac.volume : 1.0;
+      const aDelayMs = Math.max(0, Math.round((ac.timelineStart || 0) * 1000));
+      const aDurOut = aEnd > aStart ? (aEnd - aStart) / aSpeed : 0;
+
+      const chain = [
+        `atrim=start=${aStart}${aEnd > aStart ? `:end=${aEnd}` : ''}`,
+        'asetpts=PTS-STARTPTS'
+      ];
+      if (Math.abs(aSpeed - 1.0) > 0.01) chain.push(`atempo=${aSpeed}`);
+      if (aVol !== 1.0) chain.push(`volume=${aVol}`);
+      if (ac.fadeIn > 0) chain.push(`afade=t=in:st=0:d=${ac.fadeIn}`);
+      if (ac.fadeOut > 0 && aDurOut > ac.fadeOut) {
+        chain.push(`afade=t=out:st=${(aDurOut - ac.fadeOut).toFixed(3)}:d=${ac.fadeOut}`);
+      }
+      if (aDelayMs > 0) chain.push(`adelay=${aDelayMs}|${aDelayMs}`);
+
+      const lbl = `[aclip${idx}]`;
+      filterParts.push(`[${inIdx}:a]${chain.join(',')}${lbl}`);
+      audioClipLabels.push(lbl);
+    });
+
+    if (audioClipLabels.length > 0) {
+      if (hasOriginalAudio) {
+        filterParts.push(`[${currentATarget}]${audioClipLabels.join('')}amix=inputs=${1 + audioClipLabels.length}:duration=first:normalize=0[finala]`);
+        currentATarget = 'finala';
+      } else if (audioClipLabels.length === 1) {
+        filterParts.push(`${audioClipLabels[0]}anull[finala]`);
+        currentATarget = 'finala';
+      } else {
+        filterParts.push(`${audioClipLabels.join('')}amix=inputs=${audioClipLabels.length}:duration=longest:normalize=0[finala]`);
+        currentATarget = 'finala';
+      }
+    } else if (audioInputIdx !== -1 && hasOriginalAudio) {
       filterParts.push(`[${audioInputIdx}:a]volume=${audioVolume}[abgm]`);
       filterParts.push(`[${currentATarget}][abgm]amix=inputs=2:duration=first[finala]`);
       currentATarget = 'finala';
@@ -850,7 +901,7 @@ export function executeRender({
     args.push('-filter_complex', filterParts.join(';'));
     args.push('-map', `[${currentVTarget}]`);
 
-    if (hasOriginalAudio || audioInputIdx !== -1) {
+    if (hasOriginalAudio || audioInputIdx !== -1 || audioClipLabels.length > 0) {
       args.push('-map', `[${currentATarget}]`);
       args.push('-c:a', 'aac', '-b:a', '192k');
     } else {

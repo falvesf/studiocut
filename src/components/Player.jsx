@@ -31,12 +31,17 @@ export default function Player({
   clips = [],
   tracks = [{ id: 'track_1', name: 'Faixa 1', visible: true, muted: false, locked: false }],
   logoOverlay = null,
-  backgroundLayer = null
+  backgroundLayer = null,
+  audioClips = [],
+  audioTrack = null,
+  audioVolume = 1.0
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const containerRef = useRef(null);
   const prevClipIdRef = useRef(null);
+  const bgAudioRef = useRef(null);
+  const prevAudioClipIdRef = useRef(null);
 
   // Auto-detect aspect ratio from video dimensions
   const isVideoVertical = videoInfo?.height > videoInfo?.width;
@@ -136,6 +141,81 @@ export default function Player({
       }
     }
   }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl]);
+
+  // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
+  useEffect(() => {
+    const audioEl = bgAudioRef.current;
+    if (!audioEl) return;
+
+    const effectiveAudioList = audioClips.length > 0
+      ? audioClips
+      : (audioTrack?.url ? [{
+          id: 'legacy_audio_track',
+          url: audioTrack.url,
+          start: 0,
+          end: audioTrack.duration || duration || 10,
+          timelineStart: audioTrack.timelineStart || 0,
+          speed: 1.0,
+          volume: audioVolume,
+          fadeIn: 0,
+          fadeOut: 0,
+          muted: false
+        }] : []);
+
+    const activeAudio = effectiveAudioList.find((ac) => {
+      if (!ac?.url || ac.muted) return false;
+      const aStart = ac.timelineStart ?? 0;
+      const aDur = Math.max(0.05, (ac.end - ac.start) / (ac.speed || 1.0));
+      return currentTime >= aStart - 0.02 && currentTime <= aStart + aDur;
+    });
+
+    if (!activeAudio) {
+      if (!audioEl.paused) audioEl.pause();
+      prevAudioClipIdRef.current = null;
+      return;
+    }
+
+    if (!audioEl.src.endsWith(activeAudio.url)) {
+      audioEl.src = activeAudio.url;
+    }
+    const speed = activeAudio.speed || 1.0;
+    if (Math.abs(audioEl.playbackRate - speed) > 0.01) {
+      audioEl.playbackRate = speed;
+    }
+
+    const aStart = activeAudio.timelineStart ?? 0;
+    const aDur = Math.max(0.05, (activeAudio.end - activeAudio.start) / speed);
+    const elapsedInClip = Math.max(0, currentTime - aStart);
+    const targetSrcTime = activeAudio.start + elapsedInClip * speed;
+    const drift = Math.abs(audioEl.currentTime - targetSrcTime);
+    const isNewAudio = prevAudioClipIdRef.current !== activeAudio.id;
+    prevAudioClipIdRef.current = activeAudio.id;
+
+    if (isNewAudio || !isPlaying || drift > 0.25) {
+      try {
+        audioEl.currentTime = targetSrcTime;
+      } catch (e) {}
+    }
+
+    // Dynamic volume with Fade In & Fade Out
+    let vol = activeAudio.volume !== undefined ? activeAudio.volume : audioVolume;
+    const fIn = activeAudio.fadeIn || 0;
+    const fOut = activeAudio.fadeOut || 0;
+    if (fIn > 0 && elapsedInClip < fIn) {
+      vol *= Math.max(0, elapsedInClip / fIn);
+    }
+    const remainingInClip = Math.max(0, aDur - elapsedInClip);
+    if (fOut > 0 && remainingInClip < fOut) {
+      vol *= Math.max(0, remainingInClip / fOut);
+    }
+    audioEl.volume = Math.min(1, Math.max(0, vol));
+
+    if (isPlaying && audioEl.paused) {
+      audioEl.play().catch(() => {});
+    } else if (!isPlaying && !audioEl.paused) {
+      audioEl.pause();
+    }
+  }, [currentTime, isPlaying, audioClips, audioTrack, audioVolume, duration]);
 
   const togglePlay = (e) => {
     if (e) e.stopPropagation();
@@ -341,6 +421,9 @@ export default function Player({
       ref={containerRef}
       className="relative flex-1 flex flex-col bg-[#090b10] overflow-hidden p-3 select-none"
     >
+      {/* Hidden Independent Audio Track Player */}
+      <audio ref={bgAudioRef} className="hidden" preload="auto" />
+
       {/* Real-time Hardware Video Sharpening Convolution Filters */}
       <svg className="absolute w-0 h-0 pointer-events-none opacity-0" aria-hidden="true">
         <defs>

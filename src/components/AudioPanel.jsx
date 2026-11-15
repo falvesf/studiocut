@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Volume2, VolumeX, Music, Upload, Trash2, Repeat, Scissors, Sparkles, RefreshCw, Layers } from 'lucide-react';
+import { Volume2, VolumeX, Music, Upload, Trash2, Repeat, Scissors, Sparkles, RefreshCw, Gauge } from 'lucide-react';
 import { useDialog } from './DialogProvider.jsx';
 
 export default function AudioPanel({
@@ -13,6 +13,11 @@ export default function AudioPanel({
   setAudioFadeOut = () => {},
   audioTrack,
   setAudioTrack,
+  audioClips = [],
+  setAudioClips = () => {},
+  selectedAudioClipId = null,
+  setSelectedAudioClipId = () => {},
+  currentTime = 0,
   audioVolume,
   setAudioVolume,
   audioLoop,
@@ -31,6 +36,59 @@ export default function AudioPanel({
 
   const clipVolume = selectedClip?.volume !== undefined ? selectedClip.volume : 1.0;
   const isClipMuted = selectedClip?.muted === true;
+  const isAudioExtracted = selectedClip?.audioExtracted === true;
+
+  const selectedAudioClip = audioClips.find(c => c.id === selectedAudioClipId) || audioClips[0] || null;
+
+  const updateSelectedAudioClip = (fields) => {
+    if (!selectedAudioClip) return;
+    setAudioClips(prev => prev.map(ac => ac.id === selectedAudioClip.id ? { ...ac, ...fields } : ac));
+  };
+
+  const handleSplitAudioClip = () => {
+    if (!selectedAudioClip) return;
+    const acStart = selectedAudioClip.timelineStart || 0;
+    const acSpeed = selectedAudioClip.speed || 1;
+    const acDur = ((selectedAudioClip.end || selectedAudioClip.duration || 10) - (selectedAudioClip.start || 0)) / acSpeed;
+    const acEnd = acStart + acDur;
+    if (currentTime <= acStart + 0.1 || currentTime >= acEnd - 0.1) {
+      showAlert('Posicione a agulha amarela dentro do trecho de áudio para dividir.');
+      return;
+    }
+    const splitOffsetSource = (currentTime - acStart) * acSpeed;
+    const splitPoint = (selectedAudioClip.start || 0) + splitOffsetSource;
+    const firstPart = {
+      ...selectedAudioClip,
+      end: splitPoint
+    };
+    const secondPart = {
+      ...selectedAudioClip,
+      id: `aclip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      start: splitPoint,
+      timelineStart: currentTime
+    };
+    setAudioClips(prev => {
+      const idx = prev.findIndex(c => c.id === selectedAudioClip.id);
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next.splice(idx, 1, firstPart, secondPart);
+      return next;
+    });
+    setSelectedAudioClipId(secondPart.id);
+  };
+
+  const handleDeleteAudioClip = (id) => {
+    setAudioClips(prev => {
+      const next = prev.filter(c => c.id !== id);
+      if (next.length === 0) {
+        setAudioTrack(null);
+        setSelectedAudioClipId(null);
+      } else if (selectedAudioClipId === id) {
+        setSelectedAudioClipId(next[0].id);
+      }
+      return next;
+    });
+  };
 
   const updateSelectedClip = (fields) => {
     if (selectedClip) {
@@ -83,15 +141,26 @@ export default function AudioPanel({
       const data = await res.json();
       if (data.success) {
         const clipName = selectedClip?.videoName || 'Vídeo';
-        setAudioTrack({
+        const dur = data.duration || (selectedClip ? (selectedClip.end - selectedClip.start) : 0);
+        const newAudioClip = {
+          id: `aclip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name: `Áudio: ${clipName}`,
           path: data.path,
           url: data.url,
-          duration: data.duration || (selectedClip ? (selectedClip.end - selectedClip.start) : 0),
-          timelineStart: selectedClip?.timelineStart ?? 0
-        });
+          duration: dur,
+          start: 0,
+          end: dur,
+          timelineStart: selectedClip?.timelineStart ?? 0,
+          volume: selectedClip?.volume !== undefined ? selectedClip.volume : 1.0,
+          speed: selectedClip?.speed || 1.0,
+          fadeIn: 0,
+          fadeOut: 0,
+          muted: false
+        };
+        setAudioClips(prev => [...prev, newAudioClip]);
+        setSelectedAudioClipId(newAudioClip.id);
         if (selectedClip) {
-          updateSelectedClip({ muted: true });
+          updateSelectedClip({ muted: true, audioExtracted: true });
         } else {
           setMuteOriginal(true);
         }
@@ -161,14 +230,21 @@ export default function AudioPanel({
 
             <button
               type="button"
-              onClick={() => updateSelectedClip({ muted: !isClipMuted })}
+              onClick={() => updateSelectedClip({ muted: !isClipMuted, audioExtracted: false })}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                isClipMuted
+                isAudioExtracted
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : isClipMuted
                   ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                   : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
               }`}
             >
-              {isClipMuted ? (
+              {isAudioExtracted ? (
+                <>
+                  <VolumeX className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Áudio Extraído</span>
+                </>
+              ) : isClipMuted ? (
                 <>
                   <VolumeX className="w-3.5 h-3.5 text-rose-400" />
                   <span>Mutado</span>
@@ -234,27 +310,148 @@ export default function AudioPanel({
         </div>
       </div>
 
-      {/* 3. Extra Sound Track (Música de Fundo / Playback) */}
+      {/* 3. Extra Sound Track / Independent Audio Clips */}
       <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800 space-y-3">
         <div className="flex items-center justify-between">
           <span className="font-bold text-slate-200 flex items-center gap-2">
-            <Music className="w-4 h-4 text-indigo-400" />
-            Trilha Sonora Independente
+            <Music className="w-4 h-4 text-emerald-400" />
+            Trilha Sonora / Áudio Extraído
           </span>
 
-          {audioTrack && (
+          {selectedAudioClip && (
             <button
               type="button"
-              onClick={() => setAudioTrack(null)}
-              className="text-slate-500 hover:text-rose-400 p-1 rounded cursor-pointer"
-              title="Remover trilha"
+              onClick={() => handleDeleteAudioClip(selectedAudioClip.id)}
+              className="text-slate-400 hover:text-rose-400 p-1 rounded cursor-pointer flex items-center gap-1 text-[10px]"
+              title="Remover trecho de áudio selecionado"
             >
               <Trash2 className="w-3.5 h-3.5" />
+              <span>Excluir</span>
             </button>
           )}
         </div>
 
-        {audioTrack ? (
+        {selectedAudioClip ? (
+          <div className="space-y-3 pt-1">
+            {audioClips.length > 1 && (
+              <div className="flex flex-wrap gap-1">
+                {audioClips.map((ac, i) => (
+                  <button
+                    key={ac.id}
+                    type="button"
+                    onClick={() => setSelectedAudioClipId(ac.id)}
+                    className={`px-2 py-1 rounded text-[10px] font-semibold border cursor-pointer transition ${
+                      ac.id === selectedAudioClip.id
+                        ? 'bg-emerald-600/30 border-emerald-400 text-emerald-200'
+                        : 'bg-slate-800/70 border-slate-700 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Faixa {i + 1}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="p-2.5 bg-slate-950/80 rounded-lg border border-emerald-500/30 flex items-center justify-between gap-2">
+              <div className="truncate pr-2">
+                <span className="font-semibold text-slate-200 block truncate">{selectedAudioClip.name}</span>
+                <span className="text-[10px] text-emerald-400 font-mono">
+                  {(((selectedAudioClip.end || selectedAudioClip.duration || 0) - (selectedAudioClip.start || 0)) / (selectedAudioClip.speed || 1)).toFixed(1)}s
+                  {' • '}Início {(selectedAudioClip.timelineStart || 0).toFixed(1)}s
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateSelectedAudioClip({ muted: !selectedAudioClip.muted })}
+                className={`px-2 py-1 rounded text-[10px] font-bold border cursor-pointer shrink-0 ${
+                  selectedAudioClip.muted
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
+                }`}
+              >
+                {selectedAudioClip.muted ? 'Mutado' : 'Ativo'}
+              </button>
+            </div>
+
+            {/* Volume do Áudio */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-slate-400 text-[11px]">
+                <span>Volume do Trecho</span>
+                <span className="font-mono text-emerald-400 font-bold">{Math.round((selectedAudioClip.volume ?? 1) * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.05"
+                value={selectedAudioClip.volume ?? 1}
+                onChange={(e) => updateSelectedAudioClip({ volume: parseFloat(e.target.value) })}
+                className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+
+            {/* Velocidade do Áudio */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-slate-400 text-[11px]">
+                <span className="flex items-center gap-1"><Gauge className="w-3 h-3 text-cyan-400" /> Velocidade</span>
+                <span className="font-mono text-cyan-300 font-bold">{(selectedAudioClip.speed || 1).toFixed(2)}x</span>
+              </div>
+              <input
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.05"
+                value={selectedAudioClip.speed || 1}
+                onChange={(e) => updateSelectedAudioClip({ speed: parseFloat(e.target.value) })}
+                className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              />
+            </div>
+
+            {/* Fade In / Fade Out */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <div className="flex justify-between text-slate-400 text-[10px]">
+                  <span>Fade In</span>
+                  <span className="font-mono text-amber-300 font-bold">{(selectedAudioClip.fadeIn || 0).toFixed(1)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="5"
+                  step="0.1"
+                  value={selectedAudioClip.fadeIn || 0}
+                  onChange={(e) => updateSelectedAudioClip({ fadeIn: parseFloat(e.target.value) })}
+                  className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between text-slate-400 text-[10px]">
+                  <span>Fade Out</span>
+                  <span className="font-mono text-amber-300 font-bold">{(selectedAudioClip.fadeOut || 0).toFixed(1)}s</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="5"
+                  step="0.1"
+                  value={selectedAudioClip.fadeOut || 0}
+                  onChange={(e) => updateSelectedAudioClip({ fadeOut: parseFloat(e.target.value) })}
+                  className="w-full cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                />
+              </div>
+            </div>
+
+            {/* Split Audio at Playhead */}
+            <button
+              type="button"
+              onClick={handleSplitAudioClip}
+              className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Scissors className="w-3.5 h-3.5 text-amber-400" />
+              <span>Cortar / Dividir Áudio na Agulha</span>
+            </button>
+          </div>
+        ) : audioTrack ? (
           <div className="space-y-3 pt-1">
             <div className="p-2.5 bg-slate-950/80 rounded-lg border border-slate-800 flex items-center justify-between">
               <div className="truncate pr-2">
@@ -296,25 +493,25 @@ export default function AudioPanel({
               />
             </div>
           </div>
-        ) : (
-          <div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept="audio/*"
-              className="hidden"
-              onChange={handleAudioUpload}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full py-2.5 px-3 rounded-lg border border-dashed border-slate-700 hover:border-indigo-500 bg-slate-800/40 hover:bg-slate-800/80 text-slate-300 transition flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Upload className="w-4 h-4 text-indigo-400" />
-              <span>Importar Música ou Efeito Sonoro</span>
-            </button>
-          </div>
-        )}
+        ) : null}
+
+        <div>
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="audio/*"
+            className="hidden"
+            onChange={handleAudioUpload}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-2.5 px-3 rounded-lg border border-dashed border-slate-700 hover:border-indigo-500 bg-slate-800/40 hover:bg-slate-800/80 text-slate-300 transition flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Upload className="w-4 h-4 text-indigo-400" />
+            <span>Importar Música ou Efeito Sonoro</span>
+          </button>
+        </div>
       </div>
     </div>
   );

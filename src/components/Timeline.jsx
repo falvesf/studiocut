@@ -29,6 +29,87 @@ import {
 } from 'lucide-react';
 import { useDialog } from './DialogProvider.jsx';
 import { TRANSITIONS_CATALOG } from '../utils/transitionsCatalog.js';
+import { extractWaveformPeaks } from '../utils/waveformHelper.js';
+
+function AudioClipWaveform({ url, start = 0, end = 0, duration = 0, volume = 1, fadeIn = 0, fadeOut = 0, speed = 1 }) {
+  const [peaks, setPeaks] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    if (!url) return;
+    extractWaveformPeaks(url, 140).then((p) => {
+      if (active && Array.isArray(p)) setPeaks(p);
+    });
+    return () => { active = false; };
+  }, [url]);
+
+  const totalDur = duration > 0 ? duration : Math.max(end, 1);
+  const clipSourceDur = Math.max(0.05, (end > 0 ? end : totalDur) - start);
+  const clipTimelineDur = clipSourceDur / (speed || 1);
+
+  const startIdx = peaks.length > 0 ? Math.max(0, Math.floor((start / totalDur) * peaks.length)) : 0;
+  const endIdx = peaks.length > 0 ? Math.min(peaks.length, Math.max(startIdx + 1, Math.ceil(((end > 0 ? end : totalDur) / totalDur) * peaks.length))) : 0;
+  const visiblePeaks = peaks.slice(startIdx, endIdx);
+
+  const volY = Math.max(6, Math.min(94, 100 - (Math.min(2, Math.max(0, volume)) / 2) * 100));
+  const fadeInPct = Math.min(50, (fadeIn / Math.max(0.1, clipTimelineDur)) * 100);
+  const fadeOutPct = Math.min(50, (fadeOut / Math.max(0.1, clipTimelineDur)) * 100);
+
+  return (
+    <svg
+      viewBox="0 0 1000 100"
+      preserveAspectRatio="none"
+      className="absolute inset-0 w-full h-full pointer-events-none opacity-85"
+    >
+      {/* Waveform bars */}
+      {visiblePeaks.length > 0 && visiblePeaks.map((amp, i) => {
+        const barW = 1000 / visiblePeaks.length;
+        const x = i * barW;
+        const scaledAmp = Math.min(1, amp * Math.min(1.8, Math.max(0.25, volume)));
+        const h = Math.max(6, scaledAmp * 88);
+        const y = 100 - h;
+        return (
+          <rect
+            key={i}
+            x={x}
+            y={y}
+            width={Math.max(2, barW * 0.7)}
+            height={h}
+            rx={1}
+            fill="rgba(52, 211, 153, 0.55)"
+          />
+        );
+      })}
+
+      {/* Fade-in shaded triangle */}
+      {fadeInPct > 0.5 && (
+        <polygon
+          points={`0,100 0,0 ${fadeInPct * 10},0`}
+          fill="rgba(15, 23, 42, 0.65)"
+        />
+      )}
+
+      {/* Fade-out shaded triangle */}
+      {fadeOutPct > 0.5 && (
+        <polygon
+          points={`${1000 - fadeOutPct * 10},0 1000,0 1000,100`}
+          fill="rgba(15, 23, 42, 0.65)"
+        />
+      )}
+
+      {/* Volume horizontal indicator line */}
+      <line
+        x1="0"
+        y1={volY}
+        x2="1000"
+        y2={volY}
+        stroke="rgba(251, 191, 36, 0.85)"
+        strokeWidth="2"
+        strokeDasharray="6 4"
+      />
+    </svg>
+  );
+}
 
 export default function Timeline({
   duration,
@@ -45,6 +126,10 @@ export default function Timeline({
   videoRef,
   audioTrack = null,
   setAudioTrack = () => {},
+  audioClips = [],
+  setAudioClips = () => {},
+  selectedAudioClipId = null,
+  setSelectedAudioClipId = () => {},
   setActiveTab = () => {},
   undo = () => {},
   redo = () => {},
@@ -156,6 +241,93 @@ export default function Timeline({
         setSelectedClipId(active.id);
       }
     }
+  };
+
+  // Drag horizontally to reposition an audio clip on the timeline
+  const handleAudioClipDragStart = (e, ac) => {
+    if (e.button !== 0 || isDraggingTrim.current) return;
+    e.stopPropagation();
+    setSelectedAudioClipId(ac.id);
+    setActiveTab('audio');
+
+    const startX = e.clientX;
+    const origStart = ac.timelineStart || 0;
+    const contentEl = timelineContentRef.current || trackAreaRef.current;
+    const rect = contentEl ? contentEl.getBoundingClientRect() : { width: 1000 };
+    const pxPerSec = rect.width / timelineViewDuration;
+    const snapThresholdSec = 10 / Math.max(1, pxPerSec);
+
+    const snapTargets = [0, currentTime];
+    clipsWithTimeline.forEach((c) => {
+      snapTargets.push(c.timelineStart, c.timelineEnd);
+    });
+
+    const onPointerMove = (moveEvent) => {
+      const deltaSec = (moveEvent.clientX - startX) / pxPerSec;
+      let nextStart = Math.max(0, origStart + deltaSec);
+      let snapped = null;
+      for (const target of snapTargets) {
+        if (Math.abs(nextStart - target) < snapThresholdSec) {
+          nextStart = target;
+          snapped = target;
+          break;
+        }
+      }
+      setSnapGuideTime(snapped);
+      setAudioClips(prev => prev.map(item => item.id === ac.id ? { ...item, timelineStart: nextStart } : item));
+    };
+
+    const onPointerUp = () => {
+      setSnapGuideTime(null);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  // Trim left/right edges of an audio clip
+  const handleAudioTrimStart = (e, ac, edge) => {
+    e.stopPropagation();
+    setSelectedAudioClipId(ac.id);
+    setActiveTab('audio');
+    isDraggingTrim.current = { clipId: ac.id, edge };
+
+    const startX = e.clientX;
+    const origStart = ac.start || 0;
+    const origEnd = ac.end || ac.duration || 10;
+    const origTimelineStart = ac.timelineStart || 0;
+    const maxDur = ac.duration || origEnd;
+    const speed = ac.speed || 1;
+
+    const contentEl = timelineContentRef.current || trackAreaRef.current;
+    const rect = contentEl ? contentEl.getBoundingClientRect() : { width: 1000 };
+    const pxPerSec = rect.width / timelineViewDuration;
+
+    const onPointerMove = (moveEvent) => {
+      const deltaTimelineSec = (moveEvent.clientX - startX) / pxPerSec;
+      const deltaSourceSec = deltaTimelineSec * speed;
+
+      if (edge === 'left') {
+        const clampedStart = Math.max(0, Math.min(origEnd - 0.2 * speed, origStart + deltaSourceSec));
+        const actualDeltaTimeline = (clampedStart - origStart) / speed;
+        const nextTimelineStart = Math.max(0, origTimelineStart + actualDeltaTimeline);
+        setAudioClips(prev => prev.map(item => item.id === ac.id ? { ...item, start: clampedStart, timelineStart: nextTimelineStart } : item));
+      } else {
+        const clampedEnd = Math.min(maxDur, Math.max(origStart + 0.2 * speed, origEnd + deltaSourceSec));
+        setAudioClips(prev => prev.map(item => item.id === ac.id ? { ...item, end: clampedEnd } : item));
+      }
+    };
+
+    const onPointerUp = () => {
+      isDraggingTrim.current = null;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
   };
 
   const handlePointerDown = (e) => {
@@ -403,6 +575,36 @@ export default function Timeline({
 
   // Split Clip at current needle (Scissors Action)
   const handleSplit = () => {
+    if (projectDuration <= 0 && audioClips.length === 0) return;
+
+    // 0. If an audio clip is selected and needle is inside it, split the audio clip!
+    const selAudio = audioClips.find(ac => ac.id === selectedAudioClipId);
+    if (selAudio) {
+      const aStart = selAudio.timelineStart || 0;
+      const aSpeed = selAudio.speed || 1;
+      const aDur = ((selAudio.end || selAudio.duration || 10) - (selAudio.start || 0)) / aSpeed;
+      if (currentTime > aStart + 0.05 && currentTime < aStart + aDur - 0.05) {
+        const splitOffset = (currentTime - aStart) * aSpeed;
+        const splitPt = (selAudio.start || 0) + splitOffset;
+        const firstPart = { ...selAudio, end: splitPt };
+        const secondPart = {
+          ...selAudio,
+          id: `aclip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          start: splitPt,
+          timelineStart: currentTime
+        };
+        setAudioClips(prev => {
+          const idx = prev.findIndex(c => c.id === selAudio.id);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next.splice(idx, 1, firstPart, secondPart);
+          return next;
+        });
+        setSelectedAudioClipId(secondPart.id);
+        return;
+      }
+    }
+
     if (projectDuration <= 0 || clips.length === 0) return;
 
     // 1. If user has selected a clip and needle is inside it, split that clip!
@@ -1026,7 +1228,7 @@ export default function Timeline({
           {/* Audio Track Header */}
           <div
             onClick={() => setActiveTab('audio')}
-            className="h-10 px-2 flex items-center justify-between hover:bg-slate-800/30 transition cursor-pointer border-t border-slate-800/80 shrink-0"
+            className="h-14 px-2 flex items-center justify-between hover:bg-slate-800/30 transition cursor-pointer border-t border-slate-800/80 shrink-0"
           >
             <div className="flex items-center gap-1.5 min-w-0">
               <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -1035,19 +1237,21 @@ export default function Timeline({
                   Trilha Sonora
                 </span>
                 <span className="text-[9px] text-slate-400 block truncate">
-                  {audioTrack?.url ? 'Áudio Ativo' : 'Música & Mix'}
+                  {audioClips.length > 0 ? `${audioClips.length} trecho(s)` : (audioTrack?.url ? 'Áudio Ativo' : 'Música & Mix')}
                 </span>
               </div>
             </div>
-            {audioTrack?.url && (
+            {(audioClips.length > 0 || audioTrack?.url) && (
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setAudioClips([]);
+                  setSelectedAudioClipId(null);
                   setAudioTrack(null);
                 }}
                 className="p-1 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
-                title="Remover música"
+                title="Remover todas as faixas de áudio"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -1291,48 +1495,139 @@ export default function Timeline({
           })}
 
           {/* Audio Track Lane */}
-          <div className="h-10 relative px-1 py-1 flex items-center bg-slate-950/40 border-t border-slate-800/80 shrink-0">
-            {audioTrack?.url ? (() => {
-              const aStart = audioTrack.timelineStart || 0;
-              const aDur = audioTrack.duration || projectDuration || 10;
-              const leftPct = Math.max(0, (aStart / timelineViewDuration) * 100);
-              const widthPct = Math.max(3, Math.min(100 - leftPct, (aDur / timelineViewDuration) * 100));
-              return (
-                <div
-                  onClick={() => setActiveTab('audio')}
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  className="absolute top-1 bottom-1 rounded-md bg-gradient-to-r from-emerald-800/80 to-emerald-900/80 border border-emerald-500/70 px-2 flex items-center justify-between gap-1 text-[10px] text-emerald-100 font-semibold shadow cursor-pointer group"
-                >
-                  <div className="flex items-center gap-1.5 truncate min-w-0">
-                    <Music className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                    <span className="truncate">{audioTrack.name || 'Trilha Sonora'}</span>
+          <div className="h-14 relative px-1 py-1 flex items-center bg-slate-950/40 border-t border-slate-800/80 shrink-0">
+            {(() => {
+              const displayAudioClips = audioClips.length > 0
+                ? audioClips
+                : (audioTrack?.url ? [{
+                    id: 'legacy_audio',
+                    name: audioTrack.name || 'Trilha Sonora',
+                    url: audioTrack.url,
+                    path: audioTrack.path,
+                    duration: audioTrack.duration || projectDuration || 10,
+                    start: 0,
+                    end: audioTrack.duration || projectDuration || 10,
+                    timelineStart: audioTrack.timelineStart || 0,
+                    volume: 1,
+                    speed: 1,
+                    fadeIn: 0,
+                    fadeOut: 0,
+                    muted: false
+                  }] : []);
+
+              if (displayAudioClips.length === 0) {
+                return (
+                  <div
+                    onClick={() => setActiveTab('audio')}
+                    className="w-full h-full rounded border border-dashed border-slate-800 flex items-center justify-center text-[10px] text-slate-600 hover:text-slate-400 cursor-pointer transition"
+                  >
+                    + Adicionar Trilha Sonora Independente
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="font-mono text-emerald-300 text-[9px]">
-                      {audioTrack.duration ? audioTrack.duration.toFixed(1) + 's' : ''}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAudioTrack(null);
-                      }}
-                      title="Excluir faixa de áudio"
-                      className="p-0.5 rounded bg-slate-950/60 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+                );
+              }
+
+              return displayAudioClips.map((ac) => {
+                const aStart = ac.timelineStart || 0;
+                const aSpeed = ac.speed || 1;
+                const aSourceDur = Math.max(0.1, (ac.end || ac.duration || projectDuration || 10) - (ac.start || 0));
+                const aDur = aSourceDur / aSpeed;
+                const leftPct = Math.max(0, (aStart / timelineViewDuration) * 100);
+                const widthPct = Math.max(2, Math.min(100 - leftPct, (aDur / timelineViewDuration) * 100));
+                const isSelected = ac.id === selectedAudioClipId;
+
+                return (
+                  <div
+                    key={ac.id}
+                    onPointerDown={(e) => handleAudioClipDragStart(e, ac)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedAudioClipId(ac.id);
+                      setActiveTab('audio');
+                    }}
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    className={`absolute top-1 bottom-1 rounded-md overflow-hidden select-none cursor-grab active:cursor-grabbing group transition-shadow ${
+                      isSelected
+                        ? 'bg-emerald-950/90 border-2 border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.4)] z-10'
+                        : 'bg-gradient-to-r from-emerald-900/80 to-emerald-950/80 border border-emerald-500/60 hover:border-emerald-400'
+                    }`}
+                  >
+                    {/* Waveform + Volume Line + Fade Ramps */}
+                    <AudioClipWaveform
+                      url={ac.url}
+                      start={ac.start || 0}
+                      end={ac.end || ac.duration || aSourceDur}
+                      duration={ac.duration || aSourceDur}
+                      volume={ac.muted ? 0 : (ac.volume ?? 1)}
+                      fadeIn={ac.fadeIn || 0}
+                      fadeOut={ac.fadeOut || 0}
+                      speed={aSpeed}
+                    />
+
+                    {/* Left Trim Handle */}
+                    <div
+                      onPointerDown={(e) => handleAudioTrimStart(e, ac, 'left')}
+                      title="Ajustar início do áudio"
+                      className="absolute left-0 top-0 bottom-0 w-2 bg-emerald-400/20 hover:bg-emerald-400/80 cursor-ew-resize z-20 transition"
+                    />
+
+                    {/* Right Trim Handle */}
+                    <div
+                      onPointerDown={(e) => handleAudioTrimStart(e, ac, 'right')}
+                      title="Ajustar fim do áudio"
+                      className="absolute right-0 top-0 bottom-0 w-2 bg-emerald-400/20 hover:bg-emerald-400/80 cursor-ew-resize z-20 transition"
+                    />
+
+                    {/* Labels & Badges */}
+                    <div className="relative z-10 h-full px-2.5 flex items-center justify-between gap-1 text-[10px] text-emerald-100 font-semibold pointer-events-none">
+                      <div className="flex items-center gap-1.5 truncate min-w-0">
+                        <Music className="w-3 h-3 text-emerald-300 shrink-0" />
+                        <span className="truncate drop-shadow">{ac.name || 'Áudio'}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
+                        <span className="px-1 py-0.5 rounded bg-slate-950/75 text-amber-300 font-mono text-[8px]">
+                          {ac.muted ? '0%' : `${Math.round((ac.volume ?? 1) * 100)}%`}
+                        </span>
+                        {Math.abs(aSpeed - 1) > 0.01 && (
+                          <span className="px-1 py-0.5 rounded bg-slate-950/75 text-cyan-300 font-mono text-[8px]">
+                            {aSpeed.toFixed(1)}x
+                          </span>
+                        )}
+                        {(ac.fadeIn > 0 || ac.fadeOut > 0) && (
+                          <span className="px-1 py-0.5 rounded bg-slate-950/75 text-emerald-300 font-mono text-[8px]">
+                            F
+                          </span>
+                        )}
+                        <span className="font-mono text-emerald-300 text-[9px] hidden sm:inline">
+                          {aDur.toFixed(1)}s
+                        </span>
+                        <button
+                          type="button"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (ac.id === 'legacy_audio') {
+                              setAudioTrack(null);
+                            } else {
+                              setAudioClips(prev => {
+                                const next = prev.filter(item => item.id !== ac.id);
+                                if (next.length === 0) setAudioTrack(null);
+                                if (selectedAudioClipId === ac.id) setSelectedAudioClipId(next[0]?.id || null);
+                                return next;
+                              });
+                            }
+                          }}
+                          title="Excluir faixa de áudio"
+                          className="p-0.5 rounded bg-slate-950/70 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              );
-            })() : (
-              <div
-                onClick={() => setActiveTab('audio')}
-                className="w-full h-full rounded border border-dashed border-slate-800 flex items-center justify-center text-[10px] text-slate-600 hover:text-slate-400 cursor-pointer transition"
-              >
-                + Adicionar Trilha Sonora Independente
-              </div>
-            )}
+                );
+              });
+            })()}
           </div>
 
           {/* Magnetic Snap Guide Vertical Line */}

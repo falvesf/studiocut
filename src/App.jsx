@@ -77,6 +77,8 @@ export default function App() {
   const [audioFadeIn, setAudioFadeIn] = useState(0);
   const [audioFadeOut, setAudioFadeOut] = useState(0);
   const [audioTrack, setAudioTrack] = useState(null);
+  const [audioClips, setAudioClips] = useState([]);
+  const [selectedAudioClipId, setSelectedAudioClipId] = useState(null);
   const [audioVolume, setAudioVolume] = useState(1.0);
   const [audioLoop, setAudioLoop] = useState(false);
 
@@ -189,6 +191,8 @@ export default function App() {
     audioFadeIn,
     audioFadeOut,
     audioTrack,
+    audioClips,
+    selectedAudioClipId,
     audioVolume,
     audioLoop,
     enhancement,
@@ -233,6 +237,8 @@ export default function App() {
     setAudioFadeIn(Number(data.audioFadeIn) || 0);
     setAudioFadeOut(Number(data.audioFadeOut) || 0);
     setAudioTrack(data.audioTrack || null);
+    setAudioClips(Array.isArray(data.audioClips) ? data.audioClips : []);
+    setSelectedAudioClipId(data.selectedAudioClipId || null);
     setAudioVolume(data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0);
     setAudioLoop(Boolean(data.audioLoop));
     setEnhancement(data.enhancement || 'none');
@@ -331,6 +337,7 @@ export default function App() {
       const hasMeaningfulContent =
         chosen?.data &&
         ((Array.isArray(chosen.data.clips) && chosen.data.clips.length > 0) ||
+          (Array.isArray(chosen.data.audioClips) && chosen.data.audioClips.length > 0) ||
           Boolean(chosen.data.audioTrack) ||
           Boolean(chosen.data.backgroundLayer));
 
@@ -359,6 +366,7 @@ export default function App() {
     const snapshot = buildProjectSnapshot();
     const hasTimelineContent =
       snapshot.clips.length > 0 ||
+      snapshot.audioClips.length > 0 ||
       Boolean(snapshot.audioTrack) ||
       Boolean(snapshot.backgroundLayer);
 
@@ -412,6 +420,8 @@ export default function App() {
     audioFadeIn,
     audioFadeOut,
     audioTrack,
+    audioClips,
+    selectedAudioClipId,
     audioVolume,
     audioLoop,
     enhancement,
@@ -633,12 +643,34 @@ export default function App() {
   };
 
   const handleSetAudioTrack = (mediaItem) => {
+    const newId = `aclip_${Date.now()}`;
+    const dur = mediaItem.duration || 10;
     setAudioTrack({
       name: mediaItem.name,
       path: mediaItem.path,
       url: mediaItem.url,
-      duration: mediaItem.duration
+      duration: dur,
+      timelineStart: 0
     });
+    setAudioClips(prev => [
+      ...prev,
+      {
+        id: newId,
+        name: mediaItem.name,
+        path: mediaItem.path,
+        url: mediaItem.url,
+        start: 0,
+        end: dur,
+        timelineStart: 0,
+        speed: 1.0,
+        volume: 1.0,
+        fadeIn: 0,
+        fadeOut: 0,
+        muted: false
+      }
+    ]);
+    setSelectedAudioClipId(newId);
+    setActiveTab('audio');
   };
 
   const handleSetLogoOverlay = (mediaItem) => {
@@ -675,6 +707,7 @@ export default function App() {
           audioFadeIn,
           audioFadeOut,
           audioTrack: audioTrack?.path || null,
+          audioClips,
           audioVolume,
           audioLoop,
           enhancement,
@@ -793,6 +826,9 @@ export default function App() {
           tracks={tracks}
           logoOverlay={logoOverlay}
           backgroundLayer={backgroundLayer}
+          audioClips={audioClips}
+          audioTrack={audioTrack}
+          audioVolume={audioVolume}
         />
 
         {/* Right Sidebar: Tools & Tabs */}
@@ -893,6 +929,11 @@ export default function App() {
                 setAudioFadeOut={setAudioFadeOut}
                 audioTrack={audioTrack}
                 setAudioTrack={setAudioTrack}
+                audioClips={audioClips}
+                setAudioClips={setAudioClips}
+                selectedAudioClipId={selectedAudioClipId}
+                setSelectedAudioClipId={setSelectedAudioClipId}
+                currentTime={currentTime}
                 audioVolume={audioVolume}
                 setAudioVolume={setAudioVolume}
                 audioLoop={audioLoop}
@@ -963,6 +1004,10 @@ export default function App() {
         videoRef={videoRef}
         audioTrack={audioTrack}
         setAudioTrack={setAudioTrack}
+        audioClips={audioClips}
+        setAudioClips={setAudioClips}
+        selectedAudioClipId={selectedAudioClipId}
+        setSelectedAudioClipId={setSelectedAudioClipId}
         setActiveTab={setActiveTab}
         undo={undo}
         redo={redo}
