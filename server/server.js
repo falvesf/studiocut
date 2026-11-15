@@ -525,6 +525,223 @@ app.post('/api/render', async (req, res) => {
 });
 
 // ============================================================
+// FREE ONLINE STOCK MEDIA SEARCH & IMPORT (Openverse, Wikimedia, optional Pixabay)
+// ============================================================
+app.get('/api/stock/search', async (req, res) => {
+  const type = String(req.query.type || 'audio');
+  const q = String(req.query.q || 'music').trim() || 'nature';
+  const pixabayKey = String(req.query.pixabayKey || '').trim();
+
+  try {
+    if (pixabayKey && (type === 'video' || type === 'image')) {
+      const endpoint = type === 'video'
+        ? `https://pixabay.com/api/videos/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=18`
+        : `https://pixabay.com/api/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=18&image_type=photo`;
+      const resp = await fetch(endpoint);
+      const json = await resp.json();
+      if (!resp.ok) {
+        return res.status(400).json({ error: json?.message || 'Chave Pixabay inválida ou limite atingido.' });
+      }
+      const items = (json.hits || []).map((h) => {
+        if (type === 'video') {
+          const vidUrl = h.videos?.medium?.url || h.videos?.small?.url || h.videos?.large?.url;
+          const thumb = h.videos?.medium?.thumbnail || h.videos?.small?.thumbnail || '';
+          return {
+            id: `px_v_${h.id}`,
+            title: h.tags || `Pixabay Video ${h.id}`,
+            author: h.user || 'Pixabay',
+            duration: h.duration || 0,
+            thumbnail: thumb,
+            url: vidUrl,
+            width: h.videos?.medium?.width || 1280,
+            height: h.videos?.medium?.height || 720,
+            source: 'Pixabay'
+          };
+        }
+        return {
+          id: `px_i_${h.id}`,
+          title: h.tags || `Pixabay Photo ${h.id}`,
+          author: h.user || 'Pixabay',
+          thumbnail: h.previewURL || h.webformatURL,
+          url: h.largeImageURL || h.webformatURL,
+          width: h.imageWidth || 1280,
+          height: h.imageHeight || 720,
+          source: 'Pixabay'
+        };
+      }).filter((it) => Boolean(it.url));
+      return res.json({ success: true, items, source: 'Pixabay' });
+    }
+
+    if (type === 'audio') {
+      const resp = await fetch(`https://api.openverse.org/v1/audio/?q=${encodeURIComponent(q)}&page_size=20`, {
+        headers: { 'User-Agent': 'StudioCut/1.0' }
+      });
+      const json = await resp.json();
+      const items = (json.results || []).map((r) => ({
+        id: `ov_a_${r.id}`,
+        title: r.title || 'Áudio sem título',
+        author: r.creator || 'Openverse / Jamendo',
+        duration: r.duration ? Math.round(r.duration / 1000) : 0,
+        thumbnail: r.thumbnail || '',
+        url: r.url,
+        source: r.source || 'Openverse'
+      })).filter((it) => Boolean(it.url));
+      return res.json({ success: true, items, source: 'Openverse' });
+    }
+
+    if (type === 'image') {
+      const resp = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&page_size=20`, {
+        headers: { 'User-Agent': 'StudioCut/1.0' }
+      });
+      const json = await resp.json();
+      const items = (json.results || []).map((r) => ({
+        id: `ov_i_${r.id}`,
+        title: r.title || 'Imagem sem título',
+        author: r.creator || 'Openverse',
+        thumbnail: r.thumbnail || r.url,
+        url: r.url,
+        width: r.width || 0,
+        height: r.height || 0,
+        source: r.source || 'Openverse'
+      })).filter((it) => Boolean(it.url));
+      return res.json({ success: true, items, source: 'Openverse' });
+    }
+
+    // Video search without API key via Wikimedia Commons
+    const wmUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q + ' filetype:video')}&gsrlimit=15&prop=videoinfo&viprop=url|mime|size|duration|thumburl&iiurlwidth=320&format=json&origin=*`;
+    const resp = await fetch(wmUrl, {
+      headers: { 'User-Agent': 'StudioCut/1.0 (local video editor)' }
+    });
+    const json = await resp.json();
+    const pages = Object.values(json?.query?.pages || {});
+    const items = pages.map((p) => {
+      const vi = p.videoinfo?.[0];
+      if (!vi || !vi.url) return null;
+      return {
+        id: `wm_v_${p.pageid}`,
+        title: String(p.title || '').replace(/^File:/i, '').replace(/\.[^.]+$/, ''),
+        author: 'Wikimedia Commons',
+        duration: vi.duration ? Math.round(vi.duration) : 0,
+        thumbnail: vi.thumburl || '',
+        url: vi.url,
+        source: 'Wikimedia Commons'
+      };
+    }).filter(Boolean);
+
+    return res.json({ success: true, items, source: 'Wikimedia Commons' });
+  } catch (err) {
+    console.error('[Stock Search] Erro:', err);
+    res.status(500).json({ error: 'Falha ao buscar mídias online: ' + err.message });
+  }
+});
+
+app.post('/api/stock/import', async (req, res) => {
+  const { url, title = 'midia_online', type = 'video' } = req.body || {};
+  if (!url) {
+    return res.status(400).json({ error: 'URL da mídia é obrigatória.' });
+  }
+
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'StudioCut/1.0' }
+    });
+    if (!resp.ok) {
+      return res.status(400).json({ error: `Falha ao baixar mídia online (HTTP ${resp.status}).` });
+    }
+
+    const contentType = resp.headers.get('content-type') || '';
+    let ext = path.extname(new URL(url).pathname).toLowerCase();
+    if (!ext || ext.length > 6) {
+      if (contentType.includes('mpeg') || contentType.includes('mp3')) ext = '.mp3';
+      else if (contentType.includes('ogg')) ext = '.ogg';
+      else if (contentType.includes('wav')) ext = '.wav';
+      else if (contentType.includes('png')) ext = '.png';
+      else if (contentType.includes('webp')) ext = '.webp';
+      else if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = '.jpg';
+      else if (contentType.includes('webm')) ext = '.webm';
+      else ext = type === 'audio' ? '.mp3' : type === 'image' ? '.jpg' : '.mp4';
+    }
+
+    const safeBase = String(title)
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .slice(0, 36) || 'stock_media';
+
+    let filename = `${safeBase}_${Date.now()}${ext}`;
+    let filePath = path.join(UPLOADS_DIR, filename);
+
+    const arrayBuffer = await resp.arrayBuffer();
+    fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
+
+    const fileHash = await computeFileHash(filePath);
+    const mediaIndex = loadMediaIndex();
+    const cached = mediaIndex[fileHash];
+    if (cached && cached.path && fs.existsSync(cached.path)) {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (e) {}
+      return res.json({
+        ...cached,
+        success: true,
+        reused: true,
+        originalName: title || cached.originalName
+      });
+    }
+
+    let info = await probeMedia(filePath);
+    let finalType = type;
+    if (['.mp3', '.wav', '.aac', '.m4a', '.ogg'].includes(ext) || (!info.hasVideo && info.hasAudio)) {
+      finalType = 'audio';
+    } else if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext) && (!info.hasVideo || info.duration <= 0.05 || info.fps <= 1)) {
+      finalType = 'image';
+    } else {
+      finalType = 'video';
+    }
+
+    const isBrowserCompatible = info.codec === 'h264' &&
+      ['yuv420p', 'yuvj420p'].includes(info.pixFmt) &&
+      ext === '.mp4' &&
+      (!info.hasAudio || ['aac', 'mp3'].includes(info.audioCodec));
+
+    if (finalType === 'video' && !isBrowserCompatible) {
+      const webFilename = `web_${path.basename(filename, ext)}.mp4`;
+      const webPath = path.join(UPLOADS_DIR, webFilename);
+      try {
+        await transcodeToWebCompatible(filePath, webPath, null, info.duration || 0);
+        if (fs.existsSync(webPath) && fs.statSync(webPath).size > 1000) {
+          if (filePath !== webPath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          filePath = webPath;
+          filename = webFilename;
+          info = await probeMedia(webPath);
+        }
+      } catch (transcodeErr) {
+        console.error('[Stock Import] Erro ao transcodificar vídeo online:', transcodeErr);
+      }
+    }
+
+    const resultPayload = {
+      success: true,
+      reused: false,
+      filename,
+      originalName: `${safeBase}${path.extname(filename)}`,
+      path: filePath,
+      url: `/media/${encodeURIComponent(filename)}`,
+      type: finalType,
+      size: fs.statSync(filePath).size,
+      info
+    };
+
+    mediaIndex[fileHash] = resultPayload;
+    saveMediaIndex(mediaIndex);
+    res.json(resultPayload);
+  } catch (err) {
+    console.error('[Stock Import] Erro:', err);
+    res.status(500).json({ error: 'Erro ao importar mídia online: ' + err.message });
+  }
+});
+
+// ============================================================
 // PROJECTS & AUTO-SAVE ENDPOINTS
 // ============================================================
 const AUTOSAVE_FILE = path.join(PROJECTS_DIR, '_autosave_temp.json');

@@ -665,11 +665,16 @@ export function executeRender({
         aFilters += `,afade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
       }
 
-      if (c.transitionToNext === 'fade' && scaledDur > 0.6) {
-        vFilters += `,fade=t=out:st=${scaledDur - 0.5}:d=0.5`;
-      }
-      if (idx > 0 && activeClips[idx - 1].transitionToNext === 'fade' && scaledDur > 0.6) {
-        vFilters += `,fade=t=in:st=0:d=0.5`;
+      // Remove legacy fade-out/fade-in inline hacks when using real xfade transitions
+      const VALID_XFADES = new Set([
+        'fade', 'fadeblack', 'fadewhite', 'dissolve',
+        'slideleft', 'slideright', 'slideup', 'slidedown', 'smoothleft', 'smoothright',
+        'wipeleft', 'wiperight', 'wipeup', 'wipedown', 'horzopen', 'vertopen',
+        'circleopen', 'circleclose', 'zoomin', 'radial', 'pixelize', 'diagtl'
+      ]);
+      const hasAnyXfade = activeClips.length > 1 && activeClips.slice(0, -1).some(cl => VALID_XFADES.has(cl.transitionToNext));
+      if (hasAnyXfade) {
+        vFilters += `,settb=AVTB,fps=30`;
       }
 
       // Per-Clip Audio Volume & Track Mute
@@ -685,8 +690,50 @@ export function executeRender({
       clipLabelsA.push(`[${aLabel}]`);
     });
 
-    const concatInputs = clipLabelsV.map((vLbl, idx) => `${vLbl}${clipLabelsA[idx]}`).join('');
-    filterParts.push(`${concatInputs}concat=n=${activeClips.length}:v=1:a=1[basev][basea]`);
+    const VALID_XFADES_CHAIN = new Set([
+      'fade', 'fadeblack', 'fadewhite', 'dissolve',
+      'slideleft', 'slideright', 'slideup', 'slidedown', 'smoothleft', 'smoothright',
+      'wipeleft', 'wiperight', 'wipeup', 'wipedown', 'horzopen', 'vertopen',
+      'circleopen', 'circleclose', 'zoomin', 'radial', 'pixelize', 'diagtl'
+    ]);
+    const useXfadeChain = activeClips.length > 1 && activeClips.slice(0, -1).some(cl => VALID_XFADES_CHAIN.has(cl.transitionToNext));
+
+    if (useXfadeChain) {
+      let curV = clipLabelsV[0].replace(/^\[|\]$/g, '');
+      let curA = clipLabelsA[0].replace(/^\[|\]$/g, '');
+      let accDur = (activeClips[0].end - activeClips[0].start) / (activeClips[0].speed || 1.0);
+
+      for (let i = 1; i < activeClips.length; i++) {
+        const prevClip = activeClips[i - 1];
+        const currClip = activeClips[i];
+        const prevDur = (prevClip.end - prevClip.start) / (prevClip.speed || 1.0);
+        const currDur = (currClip.end - currClip.start) / (currClip.speed || 1.0);
+        const vNextIn = clipLabelsV[i].replace(/^\[|\]$/g, '');
+        const aNextIn = clipLabelsA[i].replace(/^\[|\]$/g, '');
+        const isLast = i === activeClips.length - 1;
+        const outV = isLast ? 'basev' : `xv${i}`;
+        const outA = isLast ? 'basea' : `xa${i}`;
+
+        const trType = prevClip.transitionToNext;
+        if (VALID_XFADES_CHAIN.has(trType) && Math.min(prevDur, currDur) > 0.35) {
+          const requestedDur = Number(prevClip.transitionDuration) || 0.5;
+          const d = Math.min(requestedDur, Math.max(0.2, Math.min(prevDur, currDur) - 0.15));
+          const offset = Math.max(0, accDur - d);
+          filterParts.push(`[${curV}][${vNextIn}]xfade=transition=${trType}:duration=${d.toFixed(3)}:offset=${offset.toFixed(3)}[${outV}]`);
+          filterParts.push(`[${curA}][${aNextIn}]acrossfade=d=${d.toFixed(3)}:c1=tri:c2=tri[${outA}]`);
+          accDur = accDur + currDur - d;
+        } else {
+          filterParts.push(`[${curV}][${vNextIn}]concat=n=2:v=1:a=0[${outV}]`);
+          filterParts.push(`[${curA}][${aNextIn}]concat=n=2:v=0:a=1[${outA}]`);
+          accDur = accDur + currDur;
+        }
+        curV = outV;
+        curA = outA;
+      }
+    } else {
+      const concatInputs = clipLabelsV.map((vLbl, idx) => `${vLbl}${clipLabelsA[idx]}`).join('');
+      filterParts.push(`${concatInputs}concat=n=${activeClips.length}:v=1:a=1[basev][basea]`);
+    }
 
     // Global video filters
     const postVFilters = [];

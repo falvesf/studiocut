@@ -28,6 +28,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import { useDialog } from './DialogProvider.jsx';
+import { TRANSITIONS_CATALOG } from '../utils/transitionsCatalog.js';
 
 export default function Timeline({
   duration,
@@ -1281,28 +1282,24 @@ export default function Timeline({
 
                             {/* Transition Popover */}
                             {transitionMenuClipId === clip.id && (
-                              <div className="absolute top-6 left-1/2 -translate-x-1/2 w-36 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-1 z-50 flex flex-col gap-1 text-[11px]">
-                                <span className="text-[10px] font-bold text-slate-400 px-2 py-0.5 border-b border-slate-800">
-                                  Transição
+                              <div className="absolute top-6 left-1/2 -translate-x-1/2 w-48 max-h-60 overflow-y-auto bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-1 z-50 flex flex-col gap-0.5 text-[11px]">
+                                <span className="text-[10px] font-bold text-slate-400 px-2 py-1 border-b border-slate-800 sticky top-0 bg-slate-900">
+                                  Transição entre Trechos
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleTransition(clip.id, 'none')}
-                                  className={`px-2 py-1 text-left rounded cursor-pointer ${
-                                    clip.transitionToNext === 'none' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
-                                  }`}
-                                >
-                                  Corte Direto
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleTransition(clip.id, 'fade')}
-                                  className={`px-2 py-1 text-left rounded cursor-pointer ${
-                                    clip.transitionToNext === 'fade' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
-                                  }`}
-                                >
-                                  Fade Preto (0.5s)
-                                </button>
+                                {TRANSITIONS_CATALOG.map((tr) => (
+                                  <button
+                                    key={tr.id}
+                                    type="button"
+                                    onClick={() => toggleTransition(clip.id, tr.id)}
+                                    className={`px-2 py-1 text-left rounded cursor-pointer truncate ${
+                                      (clip.transitionToNext || 'none') === tr.id
+                                        ? 'bg-indigo-600 text-white font-bold'
+                                        : 'text-slate-300 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    {tr.name}
+                                  </button>
+                                ))}
                               </div>
                             )}
                           </div>

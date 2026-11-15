@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { FolderPlus, Film, Music, Image as ImageIcon, Plus, Trash2, RefreshCw, Layers, ShieldCheck, Check, Cpu, Loader2 } from 'lucide-react';
+import { FolderPlus, Film, Music, Image as ImageIcon, Plus, Trash2, Layers, ShieldCheck, Check, Cpu, Loader2, Globe, Search, Download, Key, Play } from 'lucide-react';
 import { uploadMediaWithProgress } from '../utils/uploadHelper.js';
 import { useDialog } from './DialogProvider.jsx';
 
@@ -19,6 +19,94 @@ export default function MediaPanel({
   const { showConfirm, showAlert } = useDialog();
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
+
+  // Sub-tab: 'local' (Project Media) | 'online' (Free Online Stock)
+  const [mediaSubTab, setMediaSubTab] = useState('local');
+  const [stockType, setStockType] = useState('audio'); // 'audio' | 'image' | 'video'
+  const [stockQuery, setStockQuery] = useState('motivational');
+  const [stockResults, setStockResults] = useState([]);
+  const [isSearchingStock, setIsSearchingStock] = useState(false);
+  const [importingStockId, setImportingStockId] = useState(null);
+  const [previewAudioId, setPreviewAudioId] = useState(null);
+  const [showKeyBox, setShowKeyBox] = useState(false);
+  const [pixabayKey, setPixabayKey] = useState(() => localStorage.getItem('studiocut_pixabay_key') || '');
+
+  const searchStockMedia = async (customQuery = null, customType = null) => {
+    const q = (customQuery !== null ? customQuery : stockQuery).trim() || 'nature';
+    const t = customType || stockType;
+    setIsSearchingStock(true);
+    try {
+      const params = new URLSearchParams({ type: t, q });
+      if (pixabayKey.trim()) params.set('pixabayKey', pixabayKey.trim());
+      const res = await fetch(`/api/stock/search?${params.toString()}`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStockResults(data.items || []);
+      } else {
+        showAlert(data.error || 'Erro ao buscar mídias online.');
+      }
+    } catch (err) {
+      showAlert('Erro de conexão ao buscar biblioteca online: ' + err.message);
+    } finally {
+      setIsSearchingStock(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mediaSubTab === 'online' && stockResults.length === 0) {
+      searchStockMedia();
+    }
+  }, [mediaSubTab]);
+
+  const handleImportStock = async (item) => {
+    if (importingStockId) return;
+    setImportingStockId(item.id);
+    try {
+      const res = await fetch('/api/stock/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: item.url,
+          title: item.title,
+          type: stockType
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showAlert(data.error || 'Falha ao baixar mídia online.');
+        return;
+      }
+
+      const alreadyInProject = mediaList.some(m => m.url === data.url || m.path === data.path);
+      if (!alreadyInProject) {
+        const newMedia = {
+          id: `media_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: data.originalName || item.title,
+          filename: data.filename,
+          path: data.path,
+          url: data.url,
+          type: data.type || stockType,
+          duration: data.info?.duration || item.duration || 0,
+          width: data.info?.width || item.width || 0,
+          height: data.info?.height || item.height || 0
+        };
+        setMediaList(prev => [newMedia, ...prev]);
+      }
+
+      setMediaSubTab('local');
+      showAlert({
+        title: data.reused ? 'Mídia Reutilizada' : 'Mídia Baixada no Projeto!',
+        message: data.reused
+          ? `"${item.title}" já existia no cache e foi adicionada ao seu projeto sem duplicar.`
+          : `"${item.title}" foi baixada e adicionada ao Banco de Mídias deste projeto!`,
+        variant: 'success'
+      });
+    } catch (err) {
+      showAlert('Erro ao importar mídia online: ' + err.message);
+    } finally {
+      setImportingStockId(null);
+    }
+  };
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -114,7 +202,230 @@ export default function MediaPanel({
         </div>
       </div>
 
-      {/* Upload button */}
+      {/* Sub-tabs: Local Project Media vs Free Online Library */}
+      <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 rounded-xl border border-slate-800">
+        <button
+          type="button"
+          onClick={() => setMediaSubTab('local')}
+          className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            mediaSubTab === 'local'
+              ? 'bg-indigo-600 text-white shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <FolderPlus className="w-3.5 h-3.5" />
+          Do Projeto ({mediaList.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setMediaSubTab('online')}
+          className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+            mediaSubTab === 'online'
+              ? 'bg-cyan-600 text-white shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5" />
+          Biblioteca Online
+        </button>
+      </div>
+
+      {mediaSubTab === 'online' ? (
+        <div className="space-y-3">
+          {/* Stock Type Selector */}
+          <div className="grid grid-cols-3 gap-1">
+            {[
+              { id: 'audio', label: 'Músicas', icon: Music },
+              { id: 'image', label: 'Imagens', icon: ImageIcon },
+              { id: 'video', label: 'Vídeos', icon: Film }
+            ].map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setStockType(t.id);
+                    searchStockMedia(stockQuery, t.id);
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 border transition cursor-pointer ${
+                    stockType === t.id
+                      ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Icon className="w-3 h-3" />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Search Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              searchStockMedia();
+            }}
+            className="flex gap-1.5"
+          >
+            <input
+              type="text"
+              value={stockQuery}
+              onChange={(e) => setStockQuery(e.target.value)}
+              placeholder="Buscar músicas, fundos, vídeos..."
+              className="flex-1 bg-slate-900 border border-slate-700 focus:border-cyan-500 rounded-lg px-2.5 py-1.5 text-[11px] text-white outline-none"
+            />
+            <button
+              type="submit"
+              disabled={isSearchingStock}
+              className="px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowKeyBox(!showKeyBox)}
+              title="Chave opcional Pixabay (Grátis)"
+              className={`px-2 py-1.5 rounded-lg border text-slate-300 cursor-pointer ${
+                pixabayKey ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' : 'bg-slate-900 border-slate-700'
+              }`}
+            >
+              <Key className="w-3.5 h-3.5" />
+            </button>
+          </form>
+
+          {showKeyBox && (
+            <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-700 space-y-1.5">
+              <p className="text-[10px] text-slate-300">
+                Opcional: cole sua chave gratuita do <strong>Pixabay</strong> para ampliar vídeos/fotos em HD (já funciona sem chave via Openverse &amp; Wikimedia!).
+              </p>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={pixabayKey}
+                  onChange={(e) => {
+                    setPixabayKey(e.target.value);
+                    localStorage.setItem('studiocut_pixabay_key', e.target.value);
+                  }}
+                  placeholder="Pixabay API Key (opcional)"
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-white outline-none"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Quick Topic Chips */}
+          <div className="flex flex-wrap gap-1">
+            {['motivational', 'lofi', 'nature', 'neon', 'tech', 'abstract'].map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => {
+                  setStockQuery(tag);
+                  searchStockMedia(tag);
+                }}
+                className="px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-[9px] border border-slate-700/60 cursor-pointer"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+
+          {/* Results List */}
+          <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+            {isSearchingStock ? (
+              <div className="py-8 text-center text-slate-400 flex flex-col items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+                <span>Buscando mídias gratuitas...</span>
+              </div>
+            ) : stockResults.length === 0 ? (
+              <div className="py-6 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                Nenhum resultado encontrado. Tente outra palavra em inglês (ex: <em>happy, forest, synth</em>).
+              </div>
+            ) : (
+              stockResults.map((item) => {
+                const isImportingThis = importingStockId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className="p-2.5 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      {item.thumbnail ? (
+                        <img
+                          src={item.thumbnail}
+                          alt=""
+                          className="w-12 h-10 rounded-lg object-cover bg-slate-800 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-12 h-10 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
+                          {stockType === 'audio' ? (
+                            <Music className="w-4 h-4 text-cyan-400" />
+                          ) : (
+                            <Film className="w-4 h-4 text-indigo-400" />
+                          )}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-slate-200 truncate text-[11px]" title={item.title}>
+                          {item.title}
+                        </p>
+                        <p className="text-[9px] text-slate-400 truncate">
+                          {item.author} {item.duration > 0 ? `• ${item.duration}s` : ''} • {item.source}
+                        </p>
+                      </div>
+                    </div>
+
+                    {stockType === 'audio' && (
+                      <div className="flex items-center gap-1.5">
+                        {previewAudioId === item.id ? (
+                          <audio
+                            src={item.url}
+                            controls
+                            autoPlay
+                            className="w-full h-7"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewAudioId(item.id)}
+                            className="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Play className="w-3 h-3 text-emerald-400" />
+                            Ouvir Prévia
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      disabled={Boolean(importingStockId)}
+                      onClick={() => handleImportStock(item)}
+                      className="w-full py-1.5 px-2.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isImportingThis ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Baixando para o projeto...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3 h-3" />
+                          Baixar e Usar no Projeto
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Upload button */}
       <div>
         <input
           type="file"
@@ -320,6 +631,8 @@ export default function MediaPanel({
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
