@@ -236,9 +236,29 @@ export default function App() {
     setOriginalVolume(data.originalVolume !== undefined ? Number(data.originalVolume) : 1.0);
     setAudioFadeIn(Number(data.audioFadeIn) || 0);
     setAudioFadeOut(Number(data.audioFadeOut) || 0);
-    setAudioTrack(data.audioTrack || null);
-    setAudioClips(Array.isArray(data.audioClips) ? data.audioClips : []);
-    setSelectedAudioClipId(data.selectedAudioClipId || null);
+    const loadedAudioTrack = data.audioTrack || null;
+    let loadedAudioClips = Array.isArray(data.audioClips) ? data.audioClips : [];
+    if (loadedAudioClips.length === 0 && loadedAudioTrack?.url) {
+      const dur = loadedAudioTrack.duration || Number(data.duration) || 10;
+      loadedAudioClips = [{
+        id: `aclip_${Date.now()}`,
+        name: loadedAudioTrack.name || 'Trilha Sonora',
+        path: loadedAudioTrack.path,
+        url: loadedAudioTrack.url,
+        duration: dur,
+        start: 0,
+        end: dur,
+        timelineStart: loadedAudioTrack.timelineStart || 0,
+        volume: data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0,
+        speed: 1.0,
+        fadeIn: 0,
+        fadeOut: 0,
+        muted: false
+      }];
+    }
+    setAudioTrack(loadedAudioTrack);
+    setAudioClips(loadedAudioClips);
+    setSelectedAudioClipId(data.selectedAudioClipId || loadedAudioClips[0]?.id || null);
     setAudioVolume(data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0);
     setAudioLoop(Boolean(data.audioLoop));
     setEnhancement(data.enhancement || 'none');

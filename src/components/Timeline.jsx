@@ -246,7 +246,9 @@ export default function Timeline({
   // Drag horizontally to reposition an audio clip on the timeline
   const handleAudioClipDragStart = (e, ac) => {
     if (e.button !== 0 || isDraggingTrim.current) return;
+    e.preventDefault();
     e.stopPropagation();
+    setSelectedClipId(null);
     setSelectedAudioClipId(ac.id);
     setActiveTab('audio');
 
@@ -289,7 +291,9 @@ export default function Timeline({
 
   // Trim left/right edges of an audio clip
   const handleAudioTrimStart = (e, ac, edge) => {
+    e.preventDefault();
     e.stopPropagation();
+    setSelectedClipId(null);
     setSelectedAudioClipId(ac.id);
     setActiveTab('audio');
     isDraggingTrim.current = { clipId: ac.id, edge };
@@ -356,6 +360,7 @@ export default function Timeline({
     if (e.button !== 0 || isDraggingTrim.current) return;
     e.stopPropagation();
 
+    setSelectedAudioClipId(null);
     setSelectedClipId(clip.id);
 
     const startX = e.clientX;
@@ -577,7 +582,7 @@ export default function Timeline({
   const handleSplit = () => {
     if (projectDuration <= 0 && audioClips.length === 0) return;
 
-    // 0. If an audio clip is selected and needle is inside it, split the audio clip!
+    // 0. If an audio clip is selected, split it (or warn if needle is outside it)
     const selAudio = audioClips.find(ac => ac.id === selectedAudioClipId);
     if (selAudio) {
       const aStart = selAudio.timelineStart || 0;
@@ -601,8 +606,10 @@ export default function Timeline({
           return next;
         });
         setSelectedAudioClipId(secondPart.id);
-        return;
+      } else {
+        showAlert('Posicione a agulha amarela dentro do trecho de áudio selecionado para dividir.');
       }
+      return;
     }
 
     if (projectDuration <= 0 || clips.length === 0) return;
@@ -1541,6 +1548,7 @@ export default function Timeline({
                     onPointerDown={(e) => handleAudioClipDragStart(e, ac)}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setSelectedClipId(null);
                       setSelectedAudioClipId(ac.id);
                       setActiveTab('audio');
                     }}
@@ -1567,14 +1575,14 @@ export default function Timeline({
                     <div
                       onPointerDown={(e) => handleAudioTrimStart(e, ac, 'left')}
                       title="Ajustar início do áudio"
-                      className="absolute left-0 top-0 bottom-0 w-2 bg-emerald-400/20 hover:bg-emerald-400/80 cursor-ew-resize z-20 transition"
+                      className="absolute left-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-l-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
                     />
 
                     {/* Right Trim Handle */}
                     <div
                       onPointerDown={(e) => handleAudioTrimStart(e, ac, 'right')}
                       title="Ajustar fim do áudio"
-                      className="absolute right-0 top-0 bottom-0 w-2 bg-emerald-400/20 hover:bg-emerald-400/80 cursor-ew-resize z-20 transition"
+                      className="absolute right-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-r-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
                     />
 
                     {/* Labels & Badges */}
