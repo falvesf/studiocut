@@ -1265,6 +1265,7 @@ export default function Timeline({
                             style={{ left: `${((clip.timelineStart + clip.clipDur) / timelineViewDuration) * 100}%` }}
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSelectedClipId(clip.id);
                               setTransitionMenuClipId(transitionMenuClipId === clip.id ? null : clip.id);
                             }}
                           >
@@ -1275,33 +1276,10 @@ export default function Timeline({
                                 ? 'bg-amber-500 border-amber-300 text-slate-950 scale-110'
                                 : 'bg-slate-800 hover:bg-slate-750 border-slate-600 text-slate-300'
                               }`}
-                              title="Transição entre trechos"
+                              title="Escolher transição entre trechos"
                             >
                               <ArrowRightLeft className="w-2.5 h-2.5" />
                             </button>
-
-                            {/* Transition Popover */}
-                            {transitionMenuClipId === clip.id && (
-                              <div className="absolute top-6 left-1/2 -translate-x-1/2 w-48 max-h-60 overflow-y-auto bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-1 z-50 flex flex-col gap-0.5 text-[11px]">
-                                <span className="text-[10px] font-bold text-slate-400 px-2 py-1 border-b border-slate-800 sticky top-0 bg-slate-900">
-                                  Transição entre Trechos
-                                </span>
-                                {TRANSITIONS_CATALOG.map((tr) => (
-                                  <button
-                                    key={tr.id}
-                                    type="button"
-                                    onClick={() => toggleTransition(clip.id, tr.id)}
-                                    className={`px-2 py-1 text-left rounded cursor-pointer truncate ${
-                                      (clip.transitionToNext || 'none') === tr.id
-                                        ? 'bg-indigo-600 text-white font-bold'
-                                        : 'text-slate-300 hover:bg-slate-800'
-                                    }`}
-                                  >
-                                    {tr.name}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         )}
                       </React.Fragment>
@@ -1370,6 +1348,62 @@ export default function Timeline({
           Cursor: <strong className="text-amber-400">{formatTime(currentTime)}</strong> / {formatTime(projectDuration)}
         </span>
       </div>
+      {/* Floating Transition Picker Modal (unclipped, high-contrast) */}
+      {transitionMenuClipId && (() => {
+        const activeTrClip = clips.find(c => c.id === transitionMenuClipId);
+        const currentTr = activeTrClip?.transitionToNext || 'none';
+        return (
+          <div
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
+            onClick={() => setTransitionMenuClipId(null)}
+          >
+            <div
+              className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-900/95">
+                <div className="flex items-center gap-2.5">
+                  <ArrowRightLeft className="w-4 h-4 text-cyan-400" />
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Escolher Transição entre Trechos</h3>
+                    <p className="text-[11px] text-slate-400">Selecione o efeito aplicado na passagem para o próximo trecho.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTransitionMenuClipId(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-4 max-h-[60vh] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {TRANSITIONS_CATALOG.map((tr) => {
+                  const isSelected = currentTr === tr.id;
+                  return (
+                    <button
+                      key={tr.id}
+                      type="button"
+                      onClick={() => toggleTransition(transitionMenuClipId, tr.id)}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col gap-0.5 cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20'
+                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-600 text-slate-200'
+                      }`}
+                    >
+                      <span className="text-xs font-bold leading-tight">{tr.name}</span>
+                      <span className={`text-[10px] leading-tight ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
+                        {tr.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
