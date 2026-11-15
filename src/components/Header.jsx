@@ -1,5 +1,5 @@
 import React from 'react';
-import { Video, Cpu, Sparkles, Download, Upload, Zap, Undo2, Redo2 } from 'lucide-react';
+import { Video, Cpu, Sparkles, Download, Upload, Zap, Undo2, Redo2, Save, FolderOpen, Check } from 'lucide-react';
 
 export default function Header({
   onUploadClick,
@@ -10,7 +10,11 @@ export default function Header({
   redo = () => {},
   canUndo = false,
   canRedo = false,
-  systemInfo = null
+  systemInfo = null,
+  projectName = 'Sem título',
+  saveStatus = 'idle',
+  onSaveClick = () => {},
+  onProjectsClick = () => {}
 }) {
   const gpuName = systemInfo?.gpuName || 'GPU Acelerada';
   const encoderLabel = systemInfo?.encoderLabel || 'NVENC';
@@ -72,6 +76,24 @@ export default function Header({
           </button>
         </div>
 
+        {/* Project Name & Auto-save Status */}
+        <button
+          onClick={onProjectsClick}
+          title="Abrir Gerenciador de Projetos"
+          className="hidden md:flex items-center gap-2 ml-2 pl-3 border-l border-slate-800 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer"
+        >
+          <span className="max-w-[140px] truncate font-medium">{projectName || 'Sem título'}</span>
+          {saveStatus === 'saving' && (
+            <span className="text-[10px] text-amber-400 animate-pulse">Salvando...</span>
+          )}
+          {saveStatus === 'saved' && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400">
+              <Check className="w-3 h-3" />
+              Salvo
+            </span>
+          )}
+        </button>
+
         <div className="hidden lg:flex items-center gap-2 ml-2 pl-3 border-l border-slate-800 text-xs text-slate-400">
           <span
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border ${
@@ -105,7 +127,25 @@ export default function Header({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
+        <button
+          onClick={onProjectsClick}
+          title="Abrir ou gerenciar projetos salvos"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700/80 transition-all cursor-pointer"
+        >
+          <FolderOpen className="w-4 h-4 text-indigo-400" />
+          <span className="hidden sm:inline">Projetos</span>
+        </button>
+
+        <button
+          onClick={onSaveClick}
+          title="Salvar Projeto (Ctrl+S)"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700/80 transition-all cursor-pointer"
+        >
+          <Save className="w-4 h-4 text-emerald-400" />
+          <span className="hidden sm:inline">Salvar</span>
+        </button>
+
         <button
           onClick={onUploadClick}
           className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition border border-slate-700 hover:border-slate-600 cursor-pointer"

@@ -6,11 +6,13 @@ node_modules/
 # Production build artifacts
 dist/
 
-# User uploads & generated output files (preserves folder structure)
+# User uploads, projects & generated output files (preserves folder structure)
 uploads/*
 !uploads/.gitkeep
 output/*
 !output/.gitkeep
+projects/*
+!projects/.gitkeep
 
 # Large Whisper AI model files (>100MB exceeds GitHub push limits)
 models/*.bin

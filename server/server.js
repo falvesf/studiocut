@@ -23,9 +23,10 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const UPLOADS_DIR = path.join(ROOT_DIR, 'uploads');
 const OUTPUT_DIR = path.join(ROOT_DIR, 'output');
 const MODELS_DIR = path.join(ROOT_DIR, 'models');
+const PROJECTS_DIR = path.join(ROOT_DIR, 'projects');
 const WHISPER_MODEL = path.join(MODELS_DIR, 'ggml-base.bin');
 
-[UPLOADS_DIR, OUTPUT_DIR, MODELS_DIR].forEach(dir => {
+[UPLOADS_DIR, OUTPUT_DIR, MODELS_DIR, PROJECTS_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -33,7 +34,7 @@ const app = express();
 const PORT = 4000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Serve uploaded and rendered files with HTTP Range support for video scrubbing
 app.use('/media', express.static(UPLOADS_DIR));
@@ -400,6 +401,154 @@ app.post('/api/render', async (req, res) => {
     console.error('Erro na renderização:', err);
     sendEvent('error', { error: err.message });
     res.end();
+  }
+});
+
+// ============================================================
+// PROJECTS & AUTO-SAVE ENDPOINTS
+// ============================================================
+const AUTOSAVE_FILE = path.join(PROJECTS_DIR, '_autosave_temp.json');
+
+function sanitizeProjectId(raw) {
+  return String(raw || 'projeto')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64) || `projeto_${Date.now()}`;
+}
+
+// Auto-save routes MUST be defined before /api/projects/:id
+app.get('/api/projects/autosave', (req, res) => {
+  try {
+    if (!fs.existsSync(AUTOSAVE_FILE)) {
+      return res.json({ exists: false });
+    }
+    const raw = fs.readFileSync(AUTOSAVE_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    res.json({ exists: true, ...parsed });
+  } catch (err) {
+    console.error('Erro ao ler autosave:', err);
+    res.status(500).json({ error: 'Falha ao ler rascunho automático.' });
+  }
+});
+
+app.post('/api/projects/autosave', (req, res) => {
+  try {
+    const { projectId = null, projectName = 'Sem título', data } = req.body || {};
+    if (!data) {
+      return res.status(400).json({ error: 'Dados do projeto ausentes.' });
+    }
+    const payload = {
+      projectId,
+      projectName,
+      updatedAt: new Date().toISOString(),
+      data
+    };
+    fs.writeFileSync(AUTOSAVE_FILE, JSON.stringify(payload, null, 2), 'utf8');
+    res.json({ ok: true, updatedAt: payload.updatedAt });
+  } catch (err) {
+    console.error('Erro ao salvar autosave:', err);
+    res.status(500).json({ error: 'Falha ao salvar rascunho automático.' });
+  }
+});
+
+app.delete('/api/projects/autosave', (req, res) => {
+  try {
+    if (fs.existsSync(AUTOSAVE_FILE)) {
+      fs.unlinkSync(AUTOSAVE_FILE);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao limpar autosave:', err);
+    res.status(500).json({ error: 'Falha ao limpar rascunho.' });
+  }
+});
+
+app.get('/api/projects', (req, res) => {
+  try {
+    if (!fs.existsSync(PROJECTS_DIR)) {
+      return res.json({ projects: [] });
+    }
+    const files = fs.readdirSync(PROJECTS_DIR).filter(
+      (f) => f.endsWith('.json') && f !== '_autosave_temp.json'
+    );
+    const projects = [];
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(PROJECTS_DIR, file), 'utf8');
+        const parsed = JSON.parse(raw);
+        const data = parsed.data || {};
+        projects.push({
+          id: parsed.id || file.replace(/\.json$/, ''),
+          name: parsed.name || file.replace(/\.json$/, ''),
+          updatedAt: parsed.updatedAt || fs.statSync(path.join(PROJECTS_DIR, file)).mtime.toISOString(),
+          duration: Number(data.duration) || 0,
+          clipCount: Array.isArray(data.clips) ? data.clips.length : 0,
+          targetAspect: data.targetAspect || '9:16'
+        });
+      } catch (e) {
+        // Ignore corrupted file
+      }
+    }
+    projects.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    res.json({ projects });
+  } catch (err) {
+    console.error('Erro ao listar projetos:', err);
+    res.status(500).json({ error: 'Falha ao listar projetos.' });
+  }
+});
+
+app.post('/api/projects', (req, res) => {
+  try {
+    const { id, name, data } = req.body || {};
+    const cleanName = String(name || '').trim() || 'Projeto sem título';
+    const safeId = id ? sanitizeProjectId(id) : sanitizeProjectId(cleanName);
+    if (!data) {
+      return res.status(400).json({ error: 'Dados do projeto ausentes.' });
+    }
+    const payload = {
+      id: safeId,
+      name: cleanName,
+      updatedAt: new Date().toISOString(),
+      data
+    };
+    const filePath = path.join(PROJECTS_DIR, `${safeId}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    res.json({ ok: true, id: safeId, name: cleanName, updatedAt: payload.updatedAt });
+  } catch (err) {
+    console.error('Erro ao salvar projeto:', err);
+    res.status(500).json({ error: 'Falha ao salvar projeto.' });
+  }
+});
+
+app.get('/api/projects/:id', (req, res) => {
+  try {
+    const safeId = sanitizeProjectId(req.params.id);
+    const filePath = path.join(PROJECTS_DIR, `${safeId}.json`);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Projeto não encontrado.' });
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    res.json(JSON.parse(raw));
+  } catch (err) {
+    console.error('Erro ao abrir projeto:', err);
+    res.status(500).json({ error: 'Falha ao abrir projeto.' });
+  }
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  try {
+    const safeId = sanitizeProjectId(req.params.id);
+    const filePath = path.join(PROJECTS_DIR, `${safeId}.json`);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao excluir projeto:', err);
+    res.status(500).json({ error: 'Falha ao excluir projeto.' });
   }
 });
 

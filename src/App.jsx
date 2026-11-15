@@ -26,6 +26,7 @@ import TransitionsPanel from './components/TransitionsPanel.jsx';
 import MediaPanel from './components/MediaPanel.jsx';
 import OverlayPanel from './components/OverlayPanel.jsx';
 import ExportModal from './components/ExportModal.jsx';
+import ProjectModal from './components/ProjectModal.jsx';
 
 export default function App() {
   const [videoFile, setVideoFile] = useState(null);
@@ -88,6 +89,13 @@ export default function App() {
 
   // Active Tab
   const [activeTab, setActiveTab] = useState('trim');
+
+  // Project Save / Auto-Save Recovery State
+  const [projectId, setProjectId] = useState(null);
+  const [projectName, setProjectName] = useState('Sem título');
+  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
+  const hasRestoredRef = useRef(false);
 
   // Export Modal State
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -155,7 +163,253 @@ export default function App() {
     }
   };
 
-  // Keyboard shortcut listener for Ctrl+Z and Ctrl+Y / Ctrl+Shift+Z
+  // ============================================================
+  // PROJECT SNAPSHOT, AUTO-SAVE & RECOVERY
+  // ============================================================
+  const buildProjectSnapshot = () => ({
+    videoUrl,
+    videoPath,
+    videoInfo,
+    duration,
+    mediaList,
+    tracks,
+    clips,
+    selectedClipId,
+    targetAspect,
+    backgroundLayer,
+    logoOverlay,
+    muteOriginal,
+    originalVolume,
+    audioFadeIn,
+    audioFadeOut,
+    audioTrack,
+    audioVolume,
+    audioLoop,
+    enhancement,
+    verticalAspect,
+    transitions,
+    subtitles,
+    subtitleStyle,
+    silences
+  });
+
+  const applyProjectSnapshot = (data) => {
+    if (!data || typeof data !== 'object') return;
+    setVideoFile(null);
+    setVideoUrl(data.videoUrl || '');
+    setVideoPath(data.videoPath || '');
+    setVideoInfo(data.videoInfo || null);
+    setDuration(Number(data.duration) || 0);
+    setCurrentTime(0);
+    setMediaList(Array.isArray(data.mediaList) ? data.mediaList : []);
+    setTracks(
+      Array.isArray(data.tracks) && data.tracks.length > 0
+        ? data.tracks
+        : [{ id: 'track_1', name: 'Faixa 1', visible: true, muted: false, locked: false }]
+    );
+    setClips(Array.isArray(data.clips) ? data.clips : []);
+    setSelectedClipId(data.selectedClipId || (Array.isArray(data.clips) && data.clips[0]?.id) || null);
+    setTargetAspect(data.targetAspect || 'auto');
+    setBackgroundLayer(data.backgroundLayer || null);
+    setLogoOverlay(
+      data.logoOverlay || {
+        enabled: false,
+        path: '',
+        url: '',
+        name: '',
+        position: 'top-right',
+        scale: 15,
+        opacity: 100
+      }
+    );
+    setMuteOriginal(Boolean(data.muteOriginal));
+    setOriginalVolume(data.originalVolume !== undefined ? Number(data.originalVolume) : 1.0);
+    setAudioFadeIn(Number(data.audioFadeIn) || 0);
+    setAudioFadeOut(Number(data.audioFadeOut) || 0);
+    setAudioTrack(data.audioTrack || null);
+    setAudioVolume(data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0);
+    setAudioLoop(Boolean(data.audioLoop));
+    setEnhancement(data.enhancement || 'none');
+    setVerticalAspect(Boolean(data.verticalAspect));
+    setTransitions(data.transitions || { fadeIn: 0, fadeOut: 0 });
+    setSubtitles(Array.isArray(data.subtitles) ? data.subtitles : []);
+    setSubtitleStyle(data.subtitleStyle || { color: '#FACC15', fontSize: 22, bold: true });
+    setSilences(Array.isArray(data.silences) ? data.silences : []);
+  };
+
+  const handleSaveProject = async (nameToSave, existingId = null) => {
+    const cleanName = String(nameToSave || '').trim() || 'Projeto sem título';
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: existingId || (cleanName === projectName ? projectId : null),
+          name: cleanName,
+          data: buildProjectSnapshot()
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSaveStatus('idle');
+        return { ok: false, error: json.error || 'Erro ao salvar' };
+      }
+      setProjectId(json.id);
+      setProjectName(json.name);
+      setSaveStatus('saved');
+      return { ok: true, id: json.id, name: json.name };
+    } catch (err) {
+      setSaveStatus('idle');
+      return { ok: false, error: 'Erro de conexão ao salvar.' };
+    }
+  };
+
+  const handleLoadProject = (proj) => {
+    if (!proj || !proj.data) return;
+    setProjectId(proj.id || null);
+    setProjectName(proj.name || 'Sem título');
+    applyProjectSnapshot(proj.data);
+    setSaveStatus('saved');
+  };
+
+  const handleNewProject = async () => {
+    setProjectId(null);
+    setProjectName('Sem título');
+    applyProjectSnapshot({});
+    setSaveStatus('idle');
+    try {
+      localStorage.removeItem('studiocut_autosave_v1');
+      await fetch('/api/projects/autosave', { method: 'DELETE' });
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // Restore auto-saved draft on initial mount (protects against F5 / crash)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let localDraft = null;
+      try {
+        const rawLocal = localStorage.getItem('studiocut_autosave_v1');
+        if (rawLocal) localDraft = JSON.parse(rawLocal);
+      } catch (e) {
+        // ignore corrupted localStorage
+      }
+
+      let serverDraft = null;
+      try {
+        const res = await fetch('/api/projects/autosave');
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.exists && json.data) {
+            serverDraft = json;
+          }
+        }
+      } catch (e) {
+        // ignore network error
+      }
+
+      if (cancelled) return;
+
+      let chosen = null;
+      if (localDraft?.data && serverDraft?.data) {
+        const localTime = new Date(localDraft.updatedAt || 0).getTime();
+        const serverTime = new Date(serverDraft.updatedAt || 0).getTime();
+        chosen = localTime >= serverTime ? localDraft : serverDraft;
+      } else {
+        chosen = serverDraft || localDraft;
+      }
+
+      const hasMeaningfulContent =
+        chosen?.data &&
+        (Boolean(chosen.data.videoUrl) ||
+          (Array.isArray(chosen.data.clips) && chosen.data.clips.length > 0) ||
+          (Array.isArray(chosen.data.mediaList) && chosen.data.mediaList.length > 0));
+
+      if (hasMeaningfulContent) {
+        setProjectId(chosen.projectId || null);
+        setProjectName(chosen.projectName || 'Sem título');
+        applyProjectSnapshot(chosen.data);
+        setSaveStatus('saved');
+      }
+
+      hasRestoredRef.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Debounced continuous auto-save (800ms) to localStorage + temp file on disk
+  useEffect(() => {
+    if (!hasRestoredRef.current) return;
+
+    const snapshot = buildProjectSnapshot();
+    const hasContent =
+      Boolean(snapshot.videoUrl) ||
+      snapshot.clips.length > 0 ||
+      snapshot.mediaList.length > 0;
+
+    if (!hasContent) return;
+
+    setSaveStatus('saving');
+    const timer = setTimeout(async () => {
+      const payload = {
+        projectId,
+        projectName,
+        updatedAt: new Date().toISOString(),
+        data: snapshot
+      };
+      try {
+        localStorage.setItem('studiocut_autosave_v1', JSON.stringify(payload));
+      } catch (e) {
+        // ignore quota errors
+      }
+      try {
+        await fetch('/api/projects/autosave', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        setSaveStatus('saved');
+      } catch (e) {
+        setSaveStatus('idle');
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [
+    projectId,
+    projectName,
+    videoUrl,
+    videoPath,
+    videoInfo,
+    duration,
+    mediaList,
+    tracks,
+    clips,
+    selectedClipId,
+    targetAspect,
+    backgroundLayer,
+    logoOverlay,
+    muteOriginal,
+    originalVolume,
+    audioFadeIn,
+    audioFadeOut,
+    audioTrack,
+    audioVolume,
+    audioLoop,
+    enhancement,
+    verticalAspect,
+    transitions,
+    subtitles,
+    subtitleStyle,
+    silences
+  ]);
+
+  // Keyboard shortcut listener for Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, and Ctrl+S
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -165,11 +419,18 @@ export default function App() {
       } else if ((e.ctrlKey || e.metaKey) && ((e.key === 'y' || e.key === 'Y') || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
         e.preventDefault();
         redo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        if (projectId && projectName && projectName !== 'Sem título') {
+          handleSaveProject(projectName, projectId);
+        } else {
+          setIsProjectsOpen(true);
+        }
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
+  }, [projectId, projectName]);
 
   // Calculate total timeline duration whenever clips change
   useEffect(() => {
@@ -468,6 +729,16 @@ export default function App() {
         canUndo={canUndo}
         canRedo={canRedo}
         systemInfo={systemInfo}
+        projectName={projectName}
+        saveStatus={saveStatus}
+        onSaveClick={() => {
+          if (projectId && projectName && projectName !== 'Sem título') {
+            handleSaveProject(projectName, projectId);
+          } else {
+            setIsProjectsOpen(true);
+          }
+        }}
+        onProjectsClick={() => setIsProjectsOpen(true)}
       />
 
       <input
@@ -683,6 +954,18 @@ export default function App() {
         renderProgress={renderProgress}
         renderedResult={renderedResult}
         systemInfo={systemInfo}
+      />
+
+      {/* Project Save / Open / Recovery Modal */}
+      <ProjectModal
+        isOpen={isProjectsOpen}
+        onClose={() => setIsProjectsOpen(false)}
+        currentProjectName={projectName}
+        currentProjectId={projectId}
+        hasVideo={!!videoUrl || clips.length > 0}
+        onSaveProject={handleSaveProject}
+        onLoadProject={handleLoadProject}
+        onNewProject={handleNewProject}
       />
     </div>
   );
