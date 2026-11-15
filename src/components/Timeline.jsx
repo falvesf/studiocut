@@ -698,12 +698,60 @@ export default function Timeline({
     pushHistorySnapshot(updatedClips, tracks, selectedClip.id);
   };
 
-  // Delete selected clip
-  const handleDeleteClip = (idToDelete) => {
+  // Delete selected audio clip with confirmation
+  const handleDeleteSelectedAudio = async (audioId) => {
+    if (!audioId) return;
+    const targetAudio = audioClips.find(ac => ac.id === audioId);
+    if (!targetAudio) return;
+    const confirmed = await showConfirm(
+      `Deseja realmente excluir o trecho de áudio "${targetAudio.name || 'Áudio'}"?`
+    );
+    if (!confirmed) return;
+    setAudioClips(prev => {
+      const next = prev.filter(item => item.id !== audioId);
+      if (next.length === 0) setAudioTrack(null);
+      if (selectedAudioClipId === audioId) setSelectedAudioClipId(next[0]?.id || null);
+      return next;
+    });
+  };
+
+  // Delete active selection (audio clip or video clip) with confirmation
+  const handleDeleteActiveSelection = async () => {
+    if (selectedAudioClipId) {
+      await handleDeleteSelectedAudio(selectedAudioClipId);
+      return;
+    }
+    if (!selectedClipId) return;
     if (clips.length <= 1) {
       showAlert('Você precisa manter pelo menos 1 trecho no projeto.');
       return;
     }
+    const targetClip = clips.find(c => c.id === selectedClipId);
+    const confirmed = await showConfirm(
+      `Deseja realmente excluir o trecho de vídeo "${targetClip?.videoName || 'Trecho'}"?`
+    );
+    if (!confirmed) return;
+    const newClips = clips.filter(c => c.id !== selectedClipId);
+    setClips(newClips);
+    setSelectedClipId(newClips[0].id);
+    pushHistorySnapshot(newClips, tracks, newClips[0].id);
+  };
+
+  // Delete selected clip
+  const handleDeleteClip = async (idToDelete) => {
+    if (selectedAudioClipId && !idToDelete) {
+      await handleDeleteSelectedAudio(selectedAudioClipId);
+      return;
+    }
+    if (clips.length <= 1) {
+      showAlert('Você precisa manter pelo menos 1 trecho no projeto.');
+      return;
+    }
+    const targetClip = clips.find(c => c.id === idToDelete);
+    const confirmed = await showConfirm(
+      `Deseja realmente excluir o trecho de vídeo "${targetClip?.videoName || 'Trecho'}"?`
+    );
+    if (!confirmed) return;
     const newClips = clips.filter(c => c.id !== idToDelete);
     setClips(newClips);
     if (selectedClipId === idToDelete) {
@@ -835,15 +883,15 @@ export default function Timeline({
         e.preventDefault();
         handleTrimRight();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedClipId && clips.length > 1) {
+        if (selectedAudioClipId || (selectedClipId && clips.length > 1)) {
           e.preventDefault();
-          handleDeleteClip(selectedClipId);
+          handleDeleteActiveSelection();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentTime, clips, selectedClipId, clipsWithTimeline]);
+  }, [currentTime, clips, selectedClipId, selectedAudioClipId, audioClips, clipsWithTimeline]);
 
   // Auto-scroll timeline to follow needle during playback when zoomed in
   useEffect(() => {
@@ -1035,10 +1083,10 @@ export default function Timeline({
             </div>
           )}
 
-          {clips.length > 1 && (
+          {(selectedAudioClipId || (selectedClipId && clips.length > 1)) && (
             <button
               type="button"
-              onClick={() => handleDeleteClip(selectedClipId)}
+              onClick={handleDeleteActiveSelection}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/40 font-semibold transition cursor-pointer ml-1"
               title="Excluir o trecho selecionado (Atalho: Delete)"
             >
@@ -1609,27 +1657,6 @@ export default function Timeline({
                         <span className="font-mono text-emerald-300 text-[9px] hidden sm:inline">
                           {aDur.toFixed(1)}s
                         </span>
-                        <button
-                          type="button"
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (ac.id === 'legacy_audio') {
-                              setAudioTrack(null);
-                            } else {
-                              setAudioClips(prev => {
-                                const next = prev.filter(item => item.id !== ac.id);
-                                if (next.length === 0) setAudioTrack(null);
-                                if (selectedAudioClipId === ac.id) setSelectedAudioClipId(next[0]?.id || null);
-                                return next;
-                              });
-                            }
-                          }}
-                          title="Excluir faixa de áudio"
-                          className="p-0.5 rounded bg-slate-950/70 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
                       </div>
                     </div>
                   </div>

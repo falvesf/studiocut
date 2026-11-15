@@ -111,6 +111,13 @@ export default function Player({
       videoRef.current.src = activeClip.videoUrl;
     }
 
+    // Imperatively enforce mute/volume (React's muted prop only sets defaultMuted)
+    const clipMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true;
+    videoRef.current.muted = clipMuted;
+    videoRef.current.volume = clipMuted
+      ? 0
+      : Math.min(1, Math.max(0, activeClip?.volume !== undefined ? activeClip.volume : originalVolume));
+
     // Set playback rate
     videoRef.current.playbackRate = activeClip.speed || 1.0;
 
@@ -140,7 +147,7 @@ export default function Player({
         videoRef.current.pause();
       }
     }
-  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl]);
+  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.volume, muteOriginal, originalVolume]);
 
   // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
   useEffect(() => {
@@ -175,8 +182,10 @@ export default function Player({
       return;
     }
 
-    if (!audioEl.src.endsWith(activeAudio.url)) {
+    if (audioEl.dataset.srcUrl !== activeAudio.url) {
+      audioEl.dataset.srcUrl = activeAudio.url;
       audioEl.src = activeAudio.url;
+      audioEl.load();
     }
     const speed = activeAudio.speed || 1.0;
     if (Math.abs(audioEl.playbackRate - speed) > 0.01) {
@@ -191,7 +200,7 @@ export default function Player({
     const isNewAudio = prevAudioClipIdRef.current !== activeAudio.id;
     prevAudioClipIdRef.current = activeAudio.id;
 
-    if (isNewAudio || !isPlaying || drift > 0.25) {
+    if (audioEl.readyState >= 1 && !audioEl.seeking && (isNewAudio || !isPlaying || drift > 0.25)) {
       try {
         audioEl.currentTime = targetSrcTime;
       } catch (e) {}
@@ -224,12 +233,16 @@ export default function Player({
     if (isPlaying) {
       setIsPlaying(false);
       videoRef.current.pause();
+      if (bgAudioRef.current) bgAudioRef.current.pause();
     } else {
       if (currentTime >= duration - 0.1 && duration > 0) {
         setCurrentTime(0);
       }
       setIsPlaying(true);
       videoRef.current.play().catch(() => {});
+      if (bgAudioRef.current && bgAudioRef.current.src) {
+        bgAudioRef.current.play().catch(() => {});
+      }
     }
   };
 
