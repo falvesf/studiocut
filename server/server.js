@@ -531,45 +531,56 @@ app.get('/api/stock/search', async (req, res) => {
   const type = String(req.query.type || 'audio');
   const q = String(req.query.q || 'music').trim() || 'nature';
   const pixabayKey = String(req.query.pixabayKey || '').trim();
+  const sourceFilter = String(req.query.source || 'all'); // 'all' | 'pixabay' | 'other'
 
   try {
-    if (pixabayKey && (type === 'video' || type === 'image')) {
+    if (sourceFilter === 'pixabay' && (!pixabayKey || type === 'audio')) {
+      return res.json({ success: true, items: [], source: 'Pixabay' });
+    }
+
+    let pixabayItems = [];
+    if (pixabayKey && (type === 'video' || type === 'image') && sourceFilter !== 'other') {
       const endpoint = type === 'video'
-        ? `https://pixabay.com/api/videos/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=18`
-        : `https://pixabay.com/api/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=18&image_type=photo`;
+        ? `https://pixabay.com/api/videos/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=15`
+        : `https://pixabay.com/api/?key=${encodeURIComponent(pixabayKey)}&q=${encodeURIComponent(q)}&per_page=15&image_type=photo`;
       const resp = await fetch(endpoint);
       const json = await resp.json();
       if (!resp.ok) {
-        return res.status(400).json({ error: json?.message || 'Chave Pixabay inválida ou limite atingido.' });
-      }
-      const items = (json.hits || []).map((h) => {
-        if (type === 'video') {
-          const vidUrl = h.videos?.medium?.url || h.videos?.small?.url || h.videos?.large?.url;
-          const thumb = h.videos?.medium?.thumbnail || h.videos?.small?.thumbnail || '';
+        if (sourceFilter === 'pixabay') {
+          return res.status(400).json({ error: json?.message || 'Chave Pixabay inválida ou limite atingido.' });
+        }
+      } else {
+        pixabayItems = (json.hits || []).map((h) => {
+          if (type === 'video') {
+            const vidUrl = h.videos?.medium?.url || h.videos?.small?.url || h.videos?.large?.url;
+            const thumb = h.videos?.medium?.thumbnail || h.videos?.small?.thumbnail || '';
+            return {
+              id: `px_v_${h.id}`,
+              title: h.tags || `Pixabay Video ${h.id}`,
+              author: h.user || 'Pixabay',
+              duration: h.duration || 0,
+              thumbnail: thumb,
+              url: vidUrl,
+              width: h.videos?.medium?.width || 1280,
+              height: h.videos?.medium?.height || 720,
+              source: 'Pixabay'
+            };
+          }
           return {
-            id: `px_v_${h.id}`,
-            title: h.tags || `Pixabay Video ${h.id}`,
+            id: `px_i_${h.id}`,
+            title: h.tags || `Pixabay Photo ${h.id}`,
             author: h.user || 'Pixabay',
-            duration: h.duration || 0,
-            thumbnail: thumb,
-            url: vidUrl,
-            width: h.videos?.medium?.width || 1280,
-            height: h.videos?.medium?.height || 720,
+            thumbnail: h.previewURL || h.webformatURL,
+            url: h.largeImageURL || h.webformatURL,
+            width: h.imageWidth || 1280,
+            height: h.imageHeight || 720,
             source: 'Pixabay'
           };
-        }
-        return {
-          id: `px_i_${h.id}`,
-          title: h.tags || `Pixabay Photo ${h.id}`,
-          author: h.user || 'Pixabay',
-          thumbnail: h.previewURL || h.webformatURL,
-          url: h.largeImageURL || h.webformatURL,
-          width: h.imageWidth || 1280,
-          height: h.imageHeight || 720,
-          source: 'Pixabay'
-        };
-      }).filter((it) => Boolean(it.url));
-      return res.json({ success: true, items, source: 'Pixabay' });
+        }).filter((it) => Boolean(it.url));
+      }
+      if (sourceFilter === 'pixabay') {
+        return res.json({ success: true, items: pixabayItems, source: 'Pixabay' });
+      }
     }
 
     if (type === 'audio') {
@@ -590,11 +601,11 @@ app.get('/api/stock/search', async (req, res) => {
     }
 
     if (type === 'image') {
-      const resp = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&page_size=20`, {
+      const resp = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&page_size=15`, {
         headers: { 'User-Agent': 'StudioCut/1.0' }
       });
       const json = await resp.json();
-      const items = (json.results || []).map((r) => ({
+      const ovItems = (json.results || []).map((r) => ({
         id: `ov_i_${r.id}`,
         title: r.title || 'Imagem sem título',
         author: r.creator || 'Openverse',
@@ -604,17 +615,17 @@ app.get('/api/stock/search', async (req, res) => {
         height: r.height || 0,
         source: r.source || 'Openverse'
       })).filter((it) => Boolean(it.url));
-      return res.json({ success: true, items, source: 'Openverse' });
+      return res.json({ success: true, items: [...pixabayItems, ...ovItems], source: 'Mixed' });
     }
 
-    // Video search without API key via Wikimedia Commons (preferring browser-playable mp4/webm)
-    const wmUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q + ' filetype:video')}&gsrlimit=20&prop=videoinfo&viprop=url|mime|size|duration|thumburl&iiurlwidth=320&format=json&origin=*`;
+    // Video search via Wikimedia Commons (preferring browser-playable mp4/webm)
+    const wmUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q + ' filetype:video')}&gsrlimit=15&prop=videoinfo&viprop=url|mime|size|duration|thumburl&iiurlwidth=320&format=json&origin=*`;
     const resp = await fetch(wmUrl, {
       headers: { 'User-Agent': 'StudioCut/1.0 (local video editor)' }
     });
     const json = await resp.json();
     const pages = Object.values(json?.query?.pages || {});
-    const items = pages.map((p) => {
+    const wmItems = pages.map((p) => {
       const vi = p.videoinfo?.[0];
       if (!vi || !vi.url) return null;
       const lowerUrl = vi.url.toLowerCase();
@@ -633,7 +644,7 @@ app.get('/api/stock/search', async (req, res) => {
       };
     }).filter(Boolean);
 
-    return res.json({ success: true, items, source: 'Wikimedia Commons' });
+    return res.json({ success: true, items: [...pixabayItems, ...wmItems], source: 'Mixed' });
   } catch (err) {
     console.error('[Stock Search] Erro:', err);
     res.status(500).json({ error: 'Falha ao buscar mídias online: ' + err.message });

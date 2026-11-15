@@ -33,13 +33,15 @@ export default function MediaPanel({
   const [previewError, setPreviewError] = useState(null);
   const [showKeyBox, setShowKeyBox] = useState(false);
   const [pixabayKey, setPixabayKey] = useState(() => localStorage.getItem('studiocut_pixabay_key') || '');
+  const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | 'pixabay' | 'other'
 
-  const searchStockMedia = async (customQuery = null, customType = null) => {
+  const searchStockMedia = async (customQuery = null, customType = null, customSource = null) => {
     const q = (customQuery !== null ? customQuery : stockQuery).trim() || 'nature';
     const t = customType || stockType;
+    const src = customSource || sourceFilter;
     setIsSearchingStock(true);
     try {
-      const params = new URLSearchParams({ type: t, q });
+      const params = new URLSearchParams({ type: t, q, source: src });
       if (pixabayKey.trim()) params.set('pixabayKey', pixabayKey.trim());
       const res = await fetch(`/api/stock/search?${params.toString()}`);
       const data = await res.json();
@@ -318,6 +320,33 @@ export default function MediaPanel({
             </div>
           )}
 
+          {/* Source Filter (Pixabay vs Non-Pixabay) */}
+          {(stockType === 'video' || stockType === 'image') && (
+            <div className="flex items-center gap-1">
+              {[
+                { id: 'all', label: 'Todas as fontes' },
+                { id: 'pixabay', label: 'Somente Pixabay' },
+                { id: 'other', label: 'Outras fontes (Sem Pixabay)' }
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    setSourceFilter(opt.id);
+                    searchStockMedia(null, null, opt.id);
+                  }}
+                  className={`flex-1 py-1 px-1.5 rounded-lg text-[10px] font-semibold border transition cursor-pointer truncate ${
+                    sourceFilter === opt.id
+                      ? 'bg-cyan-950/60 border-cyan-500/60 text-cyan-200'
+                      : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Quick Topic Chips */}
           <div className="flex flex-wrap gap-1">
             {['motivational', 'lofi', 'nature', 'neon', 'tech', 'abstract'].map((tag) => (
@@ -384,11 +413,22 @@ export default function MediaPanel({
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-slate-200 truncate text-[11px]" title={item.title}>
-                          {item.title}
-                        </p>
+                        <div className="flex items-center gap-1.5 justify-between">
+                          <p className="font-semibold text-slate-200 truncate text-[11px]" title={item.title}>
+                            {item.title}
+                          </p>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide shrink-0 border ${
+                              String(item.source || '').toLowerCase().includes('pixabay')
+                                ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40'
+                                : 'bg-cyan-950/70 text-cyan-300 border-cyan-500/40'
+                            }`}
+                          >
+                            {item.source || 'Online'}
+                          </span>
+                        </div>
                         <p className="text-[9px] text-slate-400 truncate">
-                          {item.author} {item.duration > 0 ? `• ${item.duration}s` : ''} • {item.source}
+                          {item.author} {item.duration > 0 ? `• ${item.duration}s` : ''}
                         </p>
                       </div>
                     </div>
