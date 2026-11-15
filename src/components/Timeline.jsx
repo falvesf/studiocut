@@ -1266,7 +1266,7 @@ export default function Timeline({
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedClipId(clip.id);
-                              setTransitionMenuClipId(transitionMenuClipId === clip.id ? null : clip.id);
+                              setActiveTab('transitions');
                             }}
                           >
                             <button
@@ -1276,7 +1276,7 @@ export default function Timeline({
                                 ? 'bg-amber-500 border-amber-300 text-slate-950 scale-110'
                                 : 'bg-slate-800 hover:bg-slate-750 border-slate-600 text-slate-300'
                               }`}
-                              title="Escolher transição entre trechos"
+                              title="Abrir painel de Transições para este corte"
                             >
                               <ArrowRightLeft className="w-2.5 h-2.5" />
                             </button>
@@ -1292,20 +1292,40 @@ export default function Timeline({
 
           {/* Audio Track Lane */}
           <div className="h-10 relative px-1 py-1 flex items-center bg-slate-950/40 border-t border-slate-800/80 shrink-0">
-            {audioTrack?.url ? (
-              <div
-                onClick={() => setActiveTab('audio')}
-                className="h-full rounded-md bg-gradient-to-r from-emerald-800/70 to-emerald-900/70 border border-emerald-500/70 px-2 flex items-center justify-between text-[10px] text-emerald-100 font-semibold shadow cursor-pointer w-full"
-              >
-                <div className="flex items-center gap-1.5 truncate">
-                  <Music className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                  <span className="truncate">Música: {audioTrack.name || 'Trilha Sonora'}</span>
+            {audioTrack?.url ? (() => {
+              const aStart = audioTrack.timelineStart || 0;
+              const aDur = audioTrack.duration || projectDuration || 10;
+              const leftPct = Math.max(0, (aStart / timelineViewDuration) * 100);
+              const widthPct = Math.max(3, Math.min(100 - leftPct, (aDur / timelineViewDuration) * 100));
+              return (
+                <div
+                  onClick={() => setActiveTab('audio')}
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                  className="absolute top-1 bottom-1 rounded-md bg-gradient-to-r from-emerald-800/80 to-emerald-900/80 border border-emerald-500/70 px-2 flex items-center justify-between gap-1 text-[10px] text-emerald-100 font-semibold shadow cursor-pointer group"
+                >
+                  <div className="flex items-center gap-1.5 truncate min-w-0">
+                    <Music className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                    <span className="truncate">{audioTrack.name || 'Trilha Sonora'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="font-mono text-emerald-300 text-[9px]">
+                      {audioTrack.duration ? audioTrack.duration.toFixed(1) + 's' : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAudioTrack(null);
+                      }}
+                      title="Excluir faixa de áudio"
+                      className="p-0.5 rounded bg-slate-950/60 hover:bg-rose-600 text-slate-300 hover:text-white transition cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
-                <span className="font-mono text-emerald-300 text-[9px] shrink-0">
-                  {audioTrack.duration ? audioTrack.duration.toFixed(1) + 's' : ''}
-                </span>
-              </div>
-            ) : (
+              );
+            })() : (
               <div
                 onClick={() => setActiveTab('audio')}
                 className="w-full h-full rounded border border-dashed border-slate-800 flex items-center justify-center text-[10px] text-slate-600 hover:text-slate-400 cursor-pointer transition"
@@ -1348,62 +1368,6 @@ export default function Timeline({
           Cursor: <strong className="text-amber-400">{formatTime(currentTime)}</strong> / {formatTime(projectDuration)}
         </span>
       </div>
-      {/* Floating Transition Picker Modal (unclipped, high-contrast) */}
-      {transitionMenuClipId && (() => {
-        const activeTrClip = clips.find(c => c.id === transitionMenuClipId);
-        const currentTr = activeTrClip?.transitionToNext || 'none';
-        return (
-          <div
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
-            onClick={() => setTransitionMenuClipId(null)}
-          >
-            <div
-              className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-900/95">
-                <div className="flex items-center gap-2.5">
-                  <ArrowRightLeft className="w-4 h-4 text-cyan-400" />
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Escolher Transição entre Trechos</h3>
-                    <p className="text-[11px] text-slate-400">Selecione o efeito aplicado na passagem para o próximo trecho.</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTransitionMenuClipId(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="p-4 max-h-[60vh] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {TRANSITIONS_CATALOG.map((tr) => {
-                  const isSelected = currentTr === tr.id;
-                  return (
-                    <button
-                      key={tr.id}
-                      type="button"
-                      onClick={() => toggleTransition(transitionMenuClipId, tr.id)}
-                      className={`p-2.5 rounded-xl border text-left transition flex flex-col gap-0.5 cursor-pointer ${
-                        isSelected
-                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20'
-                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-600 text-slate-200'
-                      }`}
-                    >
-                      <span className="text-xs font-bold leading-tight">{tr.name}</span>
-                      <span className={`text-[10px] leading-tight ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
-                        {tr.desc}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }

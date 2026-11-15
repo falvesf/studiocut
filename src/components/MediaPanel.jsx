@@ -364,6 +364,14 @@ export default function MediaPanel({
                           }}
                           className="w-12 h-10 rounded-lg object-cover bg-slate-800 shrink-0"
                         />
+                      ) : stockType === 'video' ? (
+                        <video
+                          src={`${item.url}#t=1`}
+                          preload="metadata"
+                          muted
+                          playsInline
+                          className="w-12 h-10 rounded-lg object-cover bg-slate-800 shrink-0"
+                        />
                       ) : (
                         <div className="w-12 h-10 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
                           {stockType === 'audio' ? (
@@ -579,7 +587,13 @@ export default function MediaPanel({
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center shrink-0 border border-slate-700 overflow-hidden">
                         {item.type === 'video' ? (
-                          <Film className="w-4 h-4 text-indigo-400" />
+                          <video
+                            src={`${encodeURI(item.url)}#t=0.5`}
+                            preload="metadata"
+                            muted
+                            playsInline
+                            className="w-full h-full object-cover"
+                          />
                         ) : item.type === 'audio' ? (
                           <Music className="w-4 h-4 text-cyan-400" />
                         ) : (

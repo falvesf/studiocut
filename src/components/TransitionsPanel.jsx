@@ -9,7 +9,9 @@ export default function TransitionsPanel({
   selectedClipId = null,
   transitions = { fadeIn: 0, fadeOut: 0 },
   setTransitions = () => {},
-  duration = 0
+  duration = 0,
+  setCurrentTime = null,
+  videoRef = null
 }) {
   const { showAlert } = useDialog();
   const [activeCategory, setActiveCategory] = useState('all');
@@ -38,17 +40,36 @@ export default function TransitionsPanel({
     }
   };
 
+  const triggerTransitionPreview = (trDur) => {
+    if (!selectedClip || !nextClip || !setCurrentTime) return;
+    const clipStart = selectedClip.timelineStart !== undefined ? selectedClip.timelineStart : selectedClip.start;
+    const cutPoint = clipStart + durA;
+    const previewStart = Math.max(clipStart, cutPoint - Math.max(1.2, trDur * 0.65));
+    setCurrentTime(previewStart);
+    if (videoRef?.current) {
+      setTimeout(() => {
+        try {
+          videoRef.current?.play?.();
+        } catch (e) {}
+      }, 60);
+    }
+  };
+
   const applyTransitionToSelected = (trId) => {
     if (!selectedClip) return;
+    const nextDur = Math.min(maxTransitionDur, selectedClip.transitionDuration ?? currentTransitionDur);
     setClips(prev => prev.map(c => c.id === selectedClip.id ? {
       ...c,
       transitionToNext: trId,
-      transitionDuration: c.transitionDuration ?? currentTransitionDur
+      transitionDuration: nextDur
     } : c));
+    if (trId !== 'none') {
+      triggerTransitionPreview(nextDur);
+    }
   };
 
   const applyTransitionDuration = (durVal) => {
-    const parsed = parseFloat(durVal);
+    const parsed = Math.min(maxTransitionDur, Math.max(0.2, parseFloat(durVal)));
     if (!selectedClip) return;
     setClips(prev => prev.map(c => c.id === selectedClip.id ? { ...c, transitionDuration: parsed } : c));
   };
@@ -154,6 +175,8 @@ export default function TransitionsPanel({
               step="0.1"
               value={currentTransitionDur}
               onChange={(e) => applyTransitionDuration(e.target.value)}
+              onMouseUp={() => triggerTransitionPreview(currentTransitionDur)}
+              onTouchEnd={() => triggerTransitionPreview(currentTransitionDur)}
               className="w-full accent-cyan-500 cursor-pointer"
             />
             <div className="flex justify-between text-[9px] text-slate-500">

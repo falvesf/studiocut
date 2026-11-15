@@ -275,23 +275,29 @@ export async function transcodeToWebCompatible(inputPath, outputPath, onProgress
   });
 }
 
-// Extract Audio track from video into standalone MP3
-export function extractAudio(inputVideo, outputAudio) {
+// Extract Audio track from video (optionally trimmed to a specific clip interval) into standalone MP3
+export function extractAudio(inputVideo, outputAudio, startTime = null, endTime = null) {
   return new Promise((resolve, reject) => {
-    const ffmpeg = spawn(getFFmpegPath(), [
-      '-y',
-      '-i', inputVideo,
-      '-vn',
-      '-c:a', 'libmp3lame',
-      '-q:a', '2',
-      outputAudio
-    ]);
+    const args = ['-y'];
+    if (startTime !== null && startTime !== undefined && Number(startTime) > 0) {
+      args.push('-ss', String(Number(startTime).toFixed(3)));
+    }
+    args.push('-i', inputVideo);
+    if (startTime !== null && endTime !== null && Number(endTime) > Number(startTime)) {
+      args.push('-t', String((Number(endTime) - Number(startTime)).toFixed(3)));
+    }
+    args.push('-vn', '-c:a', 'libmp3lame', '-q:a', '2', outputAudio);
+
+    const ffmpeg = spawn(getFFmpegPath(), args);
 
     let stderr = '';
     ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
     ffmpeg.on('close', code => {
-      if (code === 0) resolve({ success: true, outputAudio });
-      else reject(new Error(`Erro ao extrair áudio (${code}): ${stderr}`));
+      if (code === 0 && fs.existsSync(outputAudio) && fs.statSync(outputAudio).size > 256) {
+        resolve({ success: true, outputAudio });
+      } else {
+        reject(new Error(`Este trecho não possui trilha de áudio válida para extrair.`));
+      }
     });
     ffmpeg.on('error', reject);
   });

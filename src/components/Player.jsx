@@ -241,6 +241,7 @@ export default function Player({
   let trFlashColor = null;
   let trFlashOpacity = 0;
   let trBlur = 0;
+  let trIsActive = false;
 
   if (activeClip && clips.length > 1) {
     const orderedClips = [...clips]
@@ -281,6 +282,7 @@ export default function Player({
       }
 
       if (phase && trType !== 'none') {
+        trIsActive = true;
         const amtOut = p;         // 0 -> 1
         const amtIn = 1 - p;      // 1 -> 0
         const amt = phase === 'out' ? amtOut : amtIn;
@@ -490,7 +492,7 @@ export default function Player({
                   transform: `scale(${scaleRatio * trScale}) translate(${transX + trTranslateX}%, ${transY + trTranslateY}%)`,
                   opacity: trOpacity,
                   clipPath: trClipPath,
-                  transition: 'transform 0.05s ease-out',
+                  transition: trIsActive ? 'none' : 'transform 0.05s ease-out',
                   display: isCurrentTrackVisible ? 'block' : 'none',
                   imageRendering: (isCasActive || isTurboActive || isSuperActive) ? '-webkit-optimize-contrast' : undefined,
                   filter: [

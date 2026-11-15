@@ -64,27 +64,37 @@ export default function AudioPanel({
     }
   };
 
-  // Extract audio from video into standalone track
+  // Extract audio from selected clip (or main video) into standalone track
   const handleExtractAudio = async () => {
-    if (!videoPath) return;
+    const targetPath = selectedClip?.videoPath || videoPath;
+    if (!targetPath) return;
     setIsExtracting(true);
 
     try {
       const res = await fetch('/api/extract-audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath: videoPath })
+        body: JSON.stringify({
+          filePath: targetPath,
+          startTime: selectedClip?.start ?? null,
+          endTime: selectedClip?.end ?? null
+        })
       });
       const data = await res.json();
       if (data.success) {
+        const clipName = selectedClip?.videoName || 'Vídeo';
         setAudioTrack({
-          name: 'Áudio Extraído do Vídeo',
+          name: `Áudio: ${clipName}`,
           path: data.path,
           url: data.url,
-          duration: data.duration
+          duration: data.duration || (selectedClip ? (selectedClip.end - selectedClip.start) : 0),
+          timelineStart: selectedClip?.timelineStart ?? 0
         });
-        setMuteOriginal(true);
-        showAlert('Áudio extraído com sucesso! Ele foi adicionado como faixa de áudio separada para você editar e mixar.');
+        if (selectedClip) {
+          updateSelectedClip({ muted: true });
+        } else {
+          setMuteOriginal(true);
+        }
       } else {
         showAlert('Erro ao extrair áudio: ' + (data.error || 'Falha'));
       }

@@ -939,6 +939,8 @@ export default function App() {
                 clips={clips}
                 setClips={setClips}
                 selectedClipId={selectedClipId}
+                setCurrentTime={setCurrentTime}
+                videoRef={videoRef}
               />
             )}
           </div>

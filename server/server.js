@@ -437,7 +437,7 @@ app.post('/api/export-srt', (req, res) => {
 
 // Extract Audio from video file
 app.post('/api/extract-audio', async (req, res) => {
-  const { filePath } = req.body;
+  const { filePath, startTime = null, endTime = null } = req.body;
   if (!filePath || !fs.existsSync(filePath)) {
     return res.status(400).json({ error: 'Arquivo de vídeo não encontrado' });
   }
@@ -446,13 +446,13 @@ app.post('/api/extract-audio', async (req, res) => {
   const outputAudio = path.join(UPLOADS_DIR, audioFilename);
 
   try {
-    await extractAudio(filePath, outputAudio);
+    await extractAudio(filePath, outputAudio, startTime, endTime);
     const info = await probeMedia(outputAudio);
     res.json({
       success: true,
       filename: audioFilename,
       path: outputAudio,
-      url: `/media/${audioFilename}`,
+      url: `/media/${encodeURIComponent(audioFilename)}`,
       duration: info.duration
     });
   } catch (err) {
