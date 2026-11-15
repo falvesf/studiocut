@@ -330,15 +330,19 @@ export default function App() {
 
       const hasMeaningfulContent =
         chosen?.data &&
-        (Boolean(chosen.data.videoUrl) ||
-          (Array.isArray(chosen.data.clips) && chosen.data.clips.length > 0) ||
-          (Array.isArray(chosen.data.mediaList) && chosen.data.mediaList.length > 0));
+        ((Array.isArray(chosen.data.clips) && chosen.data.clips.length > 0) ||
+          Boolean(chosen.data.audioTrack) ||
+          Boolean(chosen.data.backgroundLayer));
 
       if (hasMeaningfulContent) {
         setProjectId(chosen.projectId || null);
         setProjectName(chosen.projectName || 'Sem título');
         applyProjectSnapshot(chosen.data);
         setSaveStatus('saved');
+      } else {
+        try {
+          localStorage.removeItem('studiocut_autosave_v1');
+        } catch (e) {}
       }
 
       hasRestoredRef.current = true;
@@ -353,12 +357,15 @@ export default function App() {
     if (!hasRestoredRef.current) return;
 
     const snapshot = buildProjectSnapshot();
-    const hasContent =
-      Boolean(snapshot.videoUrl) ||
+    const hasTimelineContent =
       snapshot.clips.length > 0 ||
-      snapshot.mediaList.length > 0;
+      Boolean(snapshot.audioTrack) ||
+      Boolean(snapshot.backgroundLayer);
 
-    if (!hasContent) return;
+    if (!hasTimelineContent) {
+      setSaveStatus('idle');
+      return;
+    }
 
     setSaveStatus('saving');
     const timer = setTimeout(async () => {
