@@ -42,6 +42,10 @@ export default function Player({
   const prevClipIdRef = useRef(null);
   const bgAudioRef = useRef(null);
   const prevAudioClipIdRef = useRef(null);
+  const lastAudioSeekTimeRef = useRef(0);
+  const pendingAudioSyncRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const audioGainRef = useRef(null);
 
   // Auto-detect aspect ratio from video dimensions
   const isVideoVertical = videoInfo?.height > videoInfo?.width;
@@ -112,7 +116,7 @@ export default function Player({
     }
 
     // Imperatively enforce mute/volume (React's muted prop only sets defaultMuted)
-    const clipMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true;
+    const clipMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true || activeClip?.audioExtracted === true;
     videoRef.current.muted = clipMuted;
     videoRef.current.volume = clipMuted
       ? 0
@@ -147,7 +151,7 @@ export default function Player({
         videoRef.current.pause();
       }
     }
-  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.volume, muteOriginal]);
+  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.audioExtracted, activeClip?.volume, muteOriginal]);
 
   // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
   useEffect(() => {
@@ -187,7 +191,9 @@ export default function Player({
       audioEl.src = activeAudio.url;
       audioEl.load();
     }
+
     const speed = activeAudio.speed || 1.0;
+    audioEl.preservesPitch = true;
     if (Math.abs(audioEl.playbackRate - speed) > 0.01) {
       audioEl.playbackRate = speed;
     }
@@ -199,14 +205,18 @@ export default function Player({
     const drift = Math.abs(audioEl.currentTime - targetSrcTime);
     const isNewAudio = prevAudioClipIdRef.current !== activeAudio.id;
     prevAudioClipIdRef.current = activeAudio.id;
+    pendingAudioSyncRef.current = { targetSrcTime, speed };
 
-    if (audioEl.readyState >= 1 && !audioEl.seeking && (isNewAudio || !isPlaying || drift > 0.25)) {
+    const nowMs = Date.now();
+    const shouldSeek = isNewAudio || !isPlaying || (drift > 0.45 && nowMs - lastAudioSeekTimeRef.current > 450);
+    if (audioEl.readyState >= 1 && !audioEl.seeking && shouldSeek) {
       try {
         audioEl.currentTime = targetSrcTime;
+        lastAudioSeekTimeRef.current = nowMs;
       } catch (e) {}
     }
 
-    // Dynamic volume with Fade In & Fade Out
+    // Dynamic volume (supports 0%..200% via Web Audio GainNode) with Fade In & Fade Out
     let vol = activeAudio.volume !== undefined ? activeAudio.volume : audioVolume;
     const fIn = activeAudio.fadeIn || 0;
     const fOut = activeAudio.fadeOut || 0;
@@ -217,9 +227,32 @@ export default function Player({
     if (fOut > 0 && remainingInClip < fOut) {
       vol *= Math.max(0, remainingInClip / fOut);
     }
-    audioEl.volume = Math.min(1, Math.max(0, vol));
+    const clampedGain = Math.min(2, Math.max(0, vol));
+
+    if (audioGainRef.current) {
+      audioGainRef.current.gain.value = clampedGain;
+      audioEl.volume = 1;
+    } else {
+      audioEl.volume = Math.min(1, clampedGain);
+    }
 
     if (isPlaying && audioEl.paused) {
+      if (!audioCtxRef.current) {
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          const ctx = new Ctx();
+          const source = ctx.createMediaElementSource(audioEl);
+          const gain = ctx.createGain();
+          gain.gain.value = clampedGain;
+          source.connect(gain);
+          gain.connect(ctx.destination);
+          audioCtxRef.current = ctx;
+          audioGainRef.current = gain;
+          audioEl.volume = 1;
+        } catch (e) {}
+      } else if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
       audioEl.play().catch(() => {});
     } else if (!isPlaying && !audioEl.paused) {
       audioEl.pause();
@@ -318,7 +351,7 @@ export default function Player({
   // Active track for current active clip
   const activeClipTrack = tracks.find(t => t.id === (activeClip?.trackId || 'track_1')) || tracks[0];
   const isCurrentTrackVisible = activeClipTrack?.visible !== false;
-  const isCurrentTrackMuted = muteOriginal || activeClipTrack?.muted === true || activeClip?.muted === true;
+  const isCurrentTrackMuted = muteOriginal || activeClipTrack?.muted === true || (activeClip?.muted === true && !activeClip?.audioExtracted);
 
   const activeEnhancement = activeClip?.enhancement || enhancement || 'none';
   const isCasActive = activeEnhancement === 'cas_rtx' || activeEnhancement === 'sharpen';
@@ -435,7 +468,23 @@ export default function Player({
       className="relative flex-1 flex flex-col bg-[#090b10] overflow-hidden p-3 select-none"
     >
       {/* Hidden Independent Audio Track Player */}
-      <audio ref={bgAudioRef} className="hidden" preload="auto" />
+      <audio
+        ref={bgAudioRef}
+        className="hidden"
+        preload="auto"
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          const pending = pendingAudioSyncRef.current;
+          if (pending) {
+            el.preservesPitch = true;
+            el.playbackRate = pending.speed || 1.0;
+            try {
+              el.currentTime = pending.targetSrcTime || 0;
+              lastAudioSeekTimeRef.current = Date.now();
+            } catch (err) {}
+          }
+        }}
+      />
 
       {/* Real-time Hardware Video Sharpening Convolution Filters */}
       <svg className="absolute w-0 h-0 pointer-events-none opacity-0" aria-hidden="true">

@@ -228,37 +228,36 @@ export default function AudioPanel({
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => updateSelectedClip({ muted: !isClipMuted, audioExtracted: false })}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                isAudioExtracted
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                  : isClipMuted
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
-              }`}
-            >
-              {isAudioExtracted ? (
-                <>
-                  <VolumeX className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Áudio Extraído</span>
-                </>
-              ) : isClipMuted ? (
-                <>
-                  <VolumeX className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Mutado</span>
-                </>
-              ) : (
-                <>
-                  <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Com Som</span>
-                </>
-              )}
-            </button>
+            {isAudioExtracted ? (
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border bg-slate-800/80 text-slate-400 border-slate-700 select-none">
+                <span>Sem Áudio (Extraído)</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => updateSelectedClip({ muted: !isClipMuted })}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                  isClipMuted
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
+                }`}
+              >
+                {isClipMuted ? (
+                  <>
+                    <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Mutado</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Com Som</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
-          {!isClipMuted && (
+          {!isClipMuted && !isAudioExtracted && (
             <div className="space-y-1">
               <div className="flex justify-between text-slate-400 text-[11px]">
                 <span>Volume deste Trecho</span>
