@@ -1,5 +1,6 @@
 import React from 'react';
 import { Layers, Sun, Moon, Sparkles, Check } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function TransitionsPanel({
   clips = [],
@@ -9,6 +10,7 @@ export default function TransitionsPanel({
   setTransitions = () => {},
   duration = 0
 }) {
+  const { showAlert } = useDialog();
   const selectedClipIndex = clips.findIndex(c => c.id === selectedClipId);
   const selectedClip = clips[selectedClipIndex] || clips[0];
 
@@ -28,7 +30,7 @@ export default function TransitionsPanel({
       fadeOut: clipFadeOut
     })));
     setTransitions({ fadeIn: clipFadeIn, fadeOut: clipFadeOut });
-    alert('Efeito de Fade aplicado a todos os trechos do projeto!');
+    showAlert('Efeito de Fade aplicado a todos os trechos do projeto!');
   };
 
   return (

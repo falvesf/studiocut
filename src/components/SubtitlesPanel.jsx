@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Clock
 } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function SubtitlesPanel({
   subtitles,
@@ -20,6 +21,7 @@ export default function SubtitlesPanel({
   setCurrentTime,
   videoRef
 }) {
+  const { showAlert } = useDialog();
   const [isTranscribing, setIsTranscribing] = useState(false);
 
   const stylePresets = [
@@ -43,10 +45,10 @@ export default function SubtitlesPanel({
       if (data.success && data.subtitles) {
         setSubtitles(data.subtitles);
       } else {
-        alert('Nenhuma legenda detectada ou erro na transcrição.');
+        showAlert('Nenhuma legenda detectada ou erro na transcrição.');
       }
     } catch (err) {
-      alert('Erro na transcrição Whisper: ' + err.message);
+      showAlert('Erro na transcrição Whisper: ' + err.message);
     } finally {
       setIsTranscribing(false);
     }
@@ -97,7 +99,7 @@ export default function SubtitlesPanel({
       a.download = 'legendas_StudioCut.srt';
       a.click();
     } catch (err) {
-      alert('Erro ao exportar SRT: ' + err.message);
+      showAlert('Erro ao exportar SRT: ' + err.message);
     }
   };
 

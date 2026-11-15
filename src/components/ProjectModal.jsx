@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, FolderOpen, Trash2, FilePlus2, Clock, Film, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function ProjectModal({
   isOpen,
@@ -11,6 +12,7 @@ export default function ProjectModal({
   onLoadProject,
   onNewProject
 }) {
+  const { showConfirm } = useDialog();
   const [nameInput, setNameInput] = useState('');
   const [projects, setProjects] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -80,7 +82,14 @@ export default function ProjectModal({
   };
 
   const handleDelete = async (projId, projName) => {
-    if (!window.confirm(`Tem certeza que deseja excluir o projeto "${projName}"?`)) return;
+    const confirmed = await showConfirm({
+      title: 'Excluir Projeto',
+      message: `Tem certeza que deseja excluir o projeto "${projName}"?`,
+      confirmText: 'Excluir',
+      cancelText: 'Cancelar',
+      variant: 'danger'
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`/api/projects/${encodeURIComponent(projId)}`, { method: 'DELETE' });
       if (res.ok) {
@@ -92,9 +101,16 @@ export default function ProjectModal({
     }
   };
 
-  const handleCreateNew = () => {
-    if (hasVideo && !window.confirm('Iniciar um novo projeto em branco? Alterações não salvas em um projeto nomeado serão limpas do rascunho.')) {
-      return;
+  const handleCreateNew = async () => {
+    if (hasVideo) {
+      const confirmed = await showConfirm({
+        title: 'Novo Projeto em Branco',
+        message: 'Iniciar um novo projeto em branco? Alterações não salvas em um projeto nomeado serão limpas do rascunho.',
+        confirmText: 'Iniciar Novo',
+        cancelText: 'Cancelar',
+        variant: 'warning'
+      });
+      if (!confirmed) return;
     }
     onNewProject();
     onClose();

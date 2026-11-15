@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, Eye, Smartphone, Zap, CheckCircle2, Sliders, ShieldCheck, Play, RefreshCw, X, Layers, Film } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function EnhancePanel({
   enhancement,
@@ -12,6 +13,7 @@ export default function EnhancePanel({
   setClips = () => {},
   selectedClipId = null
 }) {
+  const { showAlert } = useDialog();
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [applyScope, setApplyScope] = useState('selected'); // 'selected' | 'all'
@@ -113,10 +115,10 @@ export default function EnhancePanel({
       if (data.success && data.url) {
         setPreviewUrl(data.url);
       } else {
-        alert('Erro ao gerar prévia: ' + (data.error || 'Falha'));
+        showAlert('Erro ao gerar prévia: ' + (data.error || 'Falha'));
       }
     } catch (err) {
-      alert('Erro de conexão ao gerar prévia: ' + err.message);
+      showAlert('Erro de conexão ao gerar prévia: ' + err.message);
     } finally {
       setIsPreviewLoading(false);
     }

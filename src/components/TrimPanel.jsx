@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Scissors, VolumeX, Sparkles, Check, Play, RefreshCw, Trash2 } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function TrimPanel({
   clips,
@@ -14,6 +15,7 @@ export default function TrimPanel({
   setCurrentTime,
   videoRef
 }) {
+  const { showAlert } = useDialog();
   const [isDetecting, setIsDetecting] = useState(false);
 
   const selectedClip = clips.find(c => c.id === selectedClipId) || clips[0];
@@ -48,7 +50,7 @@ export default function TrimPanel({
         });
 
     if (!target) {
-      alert('Posicione a agulha de reprodução dentro de um trecho para poder cortar com a tesoura.');
+      showAlert('Posicione a agulha de reprodução dentro de um trecho para poder cortar com a tesoura.');
       return;
     }
 
@@ -82,7 +84,7 @@ export default function TrimPanel({
 
   const deleteCurrentClip = () => {
     if (clips.length <= 1) {
-      alert('Você precisa manter pelo menos 1 trecho no vídeo.');
+      showAlert('Você precisa manter pelo menos 1 trecho no vídeo.');
       return;
     }
     const newClips = clips.filter(c => c.id !== selectedClip.id);
@@ -104,7 +106,7 @@ export default function TrimPanel({
         setSilences(data.silences);
       }
     } catch (err) {
-      alert('Erro ao detectar silêncios: ' + err.message);
+      showAlert('Erro ao detectar silêncios: ' + err.message);
     } finally {
       setIsDetecting(false);
     }
@@ -142,7 +144,7 @@ export default function TrimPanel({
     if (speechClips.length > 0) {
       setClips(speechClips);
       setSelectedClipId(speechClips[0].id);
-      alert(`Auto-Cut aplicado com sucesso! ${silences.length} pausa(s) foram removidas e o vídeo foi dividido em ${speechClips.length} trechos dinâmicos.`);
+      showAlert(`Auto-Cut aplicado com sucesso! ${silences.length} pausa(s) foram removidas e o vídeo foi dividido em ${speechClips.length} trechos dinâmicos.`);
     }
   };
 

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { FolderPlus, Film, Music, Image as ImageIcon, Plus, Trash2, RefreshCw, Layers, ShieldCheck, Check, Cpu, Loader2 } from 'lucide-react';
 import { uploadMediaWithProgress } from '../utils/uploadHelper.js';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function MediaPanel({
   mediaList = [],
@@ -15,6 +16,7 @@ export default function MediaPanel({
   clips = []
 }) {
   const fileInputRef = useRef(null);
+  const { showConfirm } = useDialog();
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
 
@@ -55,7 +57,14 @@ export default function MediaPanel({
   };
 
   const handleDeleteMedia = async (filename) => {
-    if (!confirm(`Deseja realmente remover o arquivo "${filename}" do banco de mídias?`)) return;
+    const confirmed = await showConfirm({
+      title: 'Remover Mídia',
+      message: `Deseja realmente remover o arquivo "${filename}" do banco de mídias?`,
+      confirmText: 'Remover',
+      cancelText: 'Cancelar',
+      variant: 'danger'
+    });
+    if (!confirmed) return;
     try {
       const res = await fetch(`/api/media/${encodeURIComponent(filename)}`, { method: 'DELETE' });
       const data = await res.json();

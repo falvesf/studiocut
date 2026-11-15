@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Volume2, VolumeX, Music, Upload, Trash2, Repeat, Scissors, Sparkles, RefreshCw, Layers } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function AudioPanel({
   muteOriginal,
@@ -22,6 +23,7 @@ export default function AudioPanel({
   selectedClipId = null
 }) {
   const fileInputRef = useRef(null);
+  const { showAlert } = useDialog();
   const [isExtracting, setIsExtracting] = useState(false);
 
   const selectedClipIndex = clips.findIndex(c => c.id === selectedClipId);
@@ -58,7 +60,7 @@ export default function AudioPanel({
         });
       }
     } catch (err) {
-      alert('Erro ao enviar áudio: ' + err.message);
+      showAlert('Erro ao enviar áudio: ' + err.message);
     }
   };
 
@@ -82,12 +84,12 @@ export default function AudioPanel({
           duration: data.duration
         });
         setMuteOriginal(true);
-        alert('Áudio extraído com sucesso! Ele foi adicionado como faixa de áudio separada para você editar e mixar.');
+        showAlert('Áudio extraído com sucesso! Ele foi adicionado como faixa de áudio separada para você editar e mixar.');
       } else {
-        alert('Erro ao extrair áudio: ' + (data.error || 'Falha'));
+        showAlert('Erro ao extrair áudio: ' + (data.error || 'Falha'));
       }
     } catch (err) {
-      alert('Erro de conexão ao extrair áudio: ' + err.message);
+      showAlert('Erro de conexão ao extrair áudio: ' + err.message);
     } finally {
       setIsExtracting(false);
     }

@@ -30,8 +30,10 @@ import MediaPanel from './components/MediaPanel.jsx';
 import OverlayPanel from './components/OverlayPanel.jsx';
 import ExportModal from './components/ExportModal.jsx';
 import ProjectModal from './components/ProjectModal.jsx';
+import { useDialog } from './components/DialogProvider.jsx';
 
 export default function App() {
+  const { showAlert } = useDialog();
   const [videoFile, setVideoFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState('');
   const [videoPath, setVideoPath] = useState('');
@@ -539,10 +541,10 @@ export default function App() {
         setSubtitles([]);
         setSilences([]);
       } else {
-        alert('Erro no envio do arquivo: ' + (data.error || 'Desconhecido'));
+        showAlert('Erro no envio do arquivo: ' + (data.error || 'Desconhecido'));
       }
     } catch (err) {
-      alert('Erro ao importar vídeo: ' + err.message);
+      showAlert('Erro ao importar vídeo: ' + err.message);
     } finally {
       setImportProgress(null);
       if (e.target) e.target.value = '';
@@ -694,14 +696,14 @@ export default function App() {
               setRenderedResult(data);
             } else if (event === 'error') {
               setIsRendering(false);
-              alert('Erro na renderização: ' + data.error);
+              showAlert('Erro na renderização: ' + data.error);
             }
           }
         }
       }
     } catch (err) {
       setIsRendering(false);
-      alert('Erro ao comunicar com o servidor de renderização: ' + err.message);
+      showAlert('Erro ao comunicar com o servidor de renderização: ' + err.message);
     }
   };
 

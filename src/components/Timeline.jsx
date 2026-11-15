@@ -27,6 +27,7 @@ import {
   ZoomOut,
   Maximize2
 } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function Timeline({
   duration,
@@ -51,6 +52,7 @@ export default function Timeline({
   pushHistorySnapshot = () => {}
 }) {
   const containerRef = useRef(null);
+  const { showAlert, showConfirm } = useDialog();
   const trackAreaRef = useRef(null);
   const timelineContentRef = useRef(null);
   const isDraggingScrubber = useRef(false);
@@ -424,7 +426,7 @@ export default function Timeline({
     }
 
     if (!target) {
-      alert('Posicione a agulha amarela dentro de um trecho para dividir com a tesoura.');
+      showAlert('Posicione a agulha amarela dentro de um trecho para dividir com a tesoura.');
       return;
     }
 
@@ -489,7 +491,7 @@ export default function Timeline({
   // Delete selected clip
   const handleDeleteClip = (idToDelete) => {
     if (clips.length <= 1) {
-      alert('Você precisa manter pelo menos 1 trecho no projeto.');
+      showAlert('Você precisa manter pelo menos 1 trecho no projeto.');
       return;
     }
     const newClips = clips.filter(c => c.id !== idToDelete);
@@ -543,14 +545,21 @@ export default function Timeline({
   };
 
   // Delete track
-  const handleDeleteTrack = (trackId) => {
+  const handleDeleteTrack = async (trackId) => {
     if (tracks.length <= 1) {
-      alert('O projeto precisa ter pelo menos 1 faixa.');
+      showAlert('O projeto precisa ter pelo menos 1 faixa.');
       return;
     }
     const hasClips = clips.some(c => (c.trackId || 'track_1') === trackId);
-    if (hasClips && !confirm('Esta faixa contém trechos de vídeo. Deseja realmente excluí-la e remover seus trechos?')) {
-      return;
+    if (hasClips) {
+      const confirmed = await showConfirm({
+        title: 'Excluir Faixa',
+        message: 'Esta faixa contém trechos de vídeo. Deseja realmente excluí-la e remover seus trechos?',
+        confirmText: 'Excluir Faixa',
+        cancelText: 'Cancelar',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
     }
     setTracks(prev => prev.filter(t => t.id !== trackId));
     setClips(prev => prev.filter(c => (c.trackId || 'track_1') !== trackId));

@@ -1,11 +1,13 @@
 import React, { useRef } from 'react';
 import { Image as ImageIcon, Upload, Trash2, Eye, LayoutGrid } from 'lucide-react';
+import { useDialog } from './DialogProvider.jsx';
 
 export default function OverlayPanel({
   logoOverlay,
   setLogoOverlay
 }) {
   const fileInputRef = useRef(null);
+  const { showAlert } = useDialog();
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -30,7 +32,7 @@ export default function OverlayPanel({
         }));
       }
     } catch (err) {
-      alert('Erro ao enviar imagem: ' + err.message);
+      showAlert('Erro ao enviar imagem: ' + err.message);
     }
   };
 
