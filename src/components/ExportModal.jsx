@@ -17,12 +17,17 @@ export default function ExportModal({
   onStartRender,
   isRendering,
   renderProgress,
-  renderedResult
+  renderedResult,
+  systemInfo = null
 }) {
   const [resolution, setResolution] = useState('original');
-  const [useNvenc, setUseNvenc] = useState(true);
+  const [useHardware, setUseHardware] = useState(true);
 
   if (!isOpen) return null;
+
+  const gpuName = systemInfo?.gpuName || 'GPU Acelerada';
+  const encoderLabel = systemInfo?.encoderLabel || 'NVENC';
+  const isHw = systemInfo?.isHardwareAccelerated !== false;
 
   const resolutions = [
     { id: 'original', name: 'Original', desc: 'Mantém as dimensões originais' },
@@ -69,9 +74,9 @@ export default function ExportModal({
               </div>
 
               <div>
-                <h3 className="text-sm font-bold text-white">Renderizando com RTX 4070...</h3>
+                <h3 className="text-sm font-bold text-white">Renderizando com {gpuName}...</h3>
                 <p className="text-slate-400 text-[11px] mt-1">
-                  Aplicando filtros, cortes, legendas e codificação NVENC em alta velocidade.
+                  Aplicando filtros, cortes, legendas e codificação acelerada ({encoderLabel}) em alta velocidade.
                 </p>
               </div>
 
@@ -152,28 +157,32 @@ export default function ExportModal({
               {/* Hardware Acceleration info */}
               <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <div className={`p-1.5 rounded-lg ${isHw ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/20 text-slate-400'}`}>
                     <Zap className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="font-bold text-slate-200">Aceleração NVIDIA NVENC</div>
+                    <div className="font-bold text-slate-200">
+                      {isHw ? `Aceleração de Hardware (${encoderLabel})` : 'Renderização por CPU (Multi-Core)'}
+                    </div>
                     <div className="text-[10px] text-slate-400">
-                      Usa o chip dedicado da RTX 4070 para renderização ultra veloz
+                      {isHw
+                        ? `Utiliza o hardware dedicado de ${gpuName} para renderização veloz`
+                        : 'Utiliza todos os núcleos do processador para codificação universal'}
                     </div>
                   </div>
                 </div>
 
                 <input
                   type="checkbox"
-                  checked={useNvenc}
-                  onChange={(e) => setUseNvenc(e.target.checked)}
+                  checked={useHardware}
+                  onChange={(e) => setUseHardware(e.target.checked)}
                   className="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer h-4 w-4"
                 />
               </div>
 
               <div className="pt-2">
                 <button
-                  onClick={() => onStartRender({ resolution, useNvenc })}
+                  onClick={() => onStartRender({ resolution, useNvenc: useHardware })}
                   className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4 text-cyan-200" />

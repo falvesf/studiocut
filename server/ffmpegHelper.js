@@ -6,11 +6,119 @@ const FFMPEG_BIN = 'C:\\Users\\falve\\AppData\\Local\\Microsoft\\WinGet\\Package
 const FFPROBE_BIN = 'C:\\Users\\falve\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffprobe.exe';
 
 export function getFFmpegPath() {
-  return fs.existsSync(FFMPEG_BIN) ? FFMPEG_BIN : 'ffmpeg';
+  const candidates = [
+    FFMPEG_BIN,
+    path.join(process.cwd(), 'bin', 'ffmpeg.exe'),
+    path.join(process.cwd(), 'ffmpeg.exe'),
+    'ffmpeg'
+  ];
+  for (const c of candidates) {
+    if (c === 'ffmpeg' || (fs.existsSync(c) && fs.statSync(c).size > 1000)) {
+      return c;
+    }
+  }
+  return 'ffmpeg';
 }
 
 export function getFFprobePath() {
-  return fs.existsSync(FFPROBE_BIN) ? FFPROBE_BIN : 'ffprobe';
+  const candidates = [
+    FFPROBE_BIN,
+    path.join(process.cwd(), 'bin', 'ffprobe.exe'),
+    path.join(process.cwd(), 'ffprobe.exe'),
+    'ffprobe'
+  ];
+  for (const c of candidates) {
+    if (c === 'ffprobe' || (fs.existsSync(c) && fs.statSync(c).size > 1000)) {
+      return c;
+    }
+  }
+  return 'ffprobe';
+}
+
+let cachedHwInfo = null;
+
+// Dynamic Hardware & GPU Detection (NVIDIA NVENC, Intel QSV, AMD AMF, CPU Fallback)
+export async function detectHardwareCapabilities() {
+  if (cachedHwInfo) return cachedHwInfo;
+
+  const ffmpegBin = getFFmpegPath();
+
+  let gpuNames = [];
+  try {
+    const { execSync } = await import('child_process');
+    const stdout = execSync('powershell.exe -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"', {
+      timeout: 4000,
+      encoding: 'utf-8'
+    });
+    gpuNames = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  } catch (e) {
+    console.warn('[HW Probe] Fallback detecção:', e.message);
+  }
+
+  const testEncoder = (encName) => {
+    return new Promise((resolve) => {
+      const proc = spawn(ffmpegBin, [
+        '-f', 'lavfi', '-i', 'nullsrc=s=256x256:r=1',
+        '-c:v', encName,
+        '-t', '0.1',
+        '-f', 'null', '-'
+      ]);
+      proc.on('close', code => resolve(code === 0));
+      proc.on('error', () => resolve(false));
+    });
+  };
+
+  let bestEncoder = 'libx264';
+  let encoderType = 'cpu';
+  let encoderLabel = 'CPU Multi-Core';
+
+  // 1. Test NVIDIA NVENC (RTX 4070, 3050, GTX 1660/1060, etc.)
+  const hasNvenc = await testEncoder('h264_nvenc');
+  if (hasNvenc) {
+    bestEncoder = 'h264_nvenc';
+    encoderType = 'nvenc';
+    encoderLabel = 'NVIDIA NVENC';
+  } else {
+    // 2. Test Intel QuickSync (Intel Core i3/i5/i7/i9 Iris Xe & UHD)
+    const hasQsv = await testEncoder('h264_qsv');
+    if (hasQsv) {
+      bestEncoder = 'h264_qsv';
+      encoderType = 'qsv';
+      encoderLabel = 'Intel QuickSync';
+    } else {
+      // 3. Test AMD AMF (Radeon RX / Vega / Ryzen APU)
+      const hasAmf = await testEncoder('h264_amf');
+      if (hasAmf) {
+        bestEncoder = 'h264_amf';
+        encoderType = 'amf';
+        encoderLabel = 'AMD AMF';
+      }
+    }
+  }
+
+  // Determine user-friendly GPU name
+  let displayGpu = '';
+  if (encoderType === 'nvenc') {
+    displayGpu = gpuNames.find(n => /nvidia|geforce|rtx|gtx/i.test(n)) || 'NVIDIA GeForce GPU';
+  } else if (encoderType === 'qsv') {
+    displayGpu = gpuNames.find(n => /intel|iris|uhd/i.test(n)) || 'Intel HD/Iris Graphics';
+  } else if (encoderType === 'amf') {
+    displayGpu = gpuNames.find(n => /amd|radeon/i.test(n)) || 'AMD Radeon GPU';
+  } else {
+    displayGpu = gpuNames[0] || 'Processador Universal (CPU)';
+  }
+
+  cachedHwInfo = {
+    gpuName: displayGpu,
+    allGpus: gpuNames,
+    encoder: bestEncoder,
+    encoderType,
+    encoderLabel,
+    isHardwareAccelerated: encoderType !== 'cpu'
+  };
+
+  console.log(`[Hardware Auto-Detect] ✅ GPU: "${displayGpu}" | Codificador: ${bestEncoder} (${encoderLabel})`);
+  return cachedHwInfo;
 }
 
 export function probeMedia(filePath) {
@@ -69,34 +177,40 @@ export function probeMedia(filePath) {
   });
 }
 
-// Ensure video/audio is 100% browser-playable (H.264/AAC MP4) via RTX 4070 NVENC
-export function transcodeToWebCompatible(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    console.log(`[Transcode NVENC] Convertendo mídia incompatível com navegador para H.264/AAC: ${inputPath}`);
+// Ensure video/audio is 100% browser-playable (H.264/AAC MP4) via hardware acceleration with CPU fallback
+export async function transcodeToWebCompatible(inputPath, outputPath) {
+  const hw = await detectHardwareCapabilities();
 
-    const runNvenc = () => {
+  return new Promise((resolve, reject) => {
+    console.log(`[Transcode] Convertendo mídia com codificador ${hw.encoderLabel}: ${inputPath}`);
+
+    const runHardware = () => {
       const args = [
         '-y',
-        '-i', inputPath,
-        '-c:v', 'h264_nvenc',
-        '-preset', 'p4',
-        '-cq', '22',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-movflags', '+faststart',
-        outputPath
+        '-i', inputPath
       ];
+
+      if (hw.encoderType === 'nvenc') {
+        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '22', '-pix_fmt', 'yuv420p');
+      } else if (hw.encoderType === 'qsv') {
+        args.push('-c:v', 'h264_qsv', '-global_quality', '22', '-preset', 'medium', '-pix_fmt', 'nv12');
+      } else if (hw.encoderType === 'amf') {
+        args.push('-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '22', '-qp_p', '22', '-pix_fmt', 'yuv420p');
+      } else {
+        return runCpuFallback();
+      }
+
+      args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', outputPath);
 
       const proc = spawn(getFFmpegPath(), args);
       let stderr = '';
       proc.stderr.on('data', d => { stderr += d.toString(); });
       proc.on('close', code => {
         if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
-          console.log(`[Transcode NVENC] Concluído com sucesso: ${outputPath}`);
+          console.log(`[Transcode] Concluído com sucesso (${hw.encoderLabel}): ${outputPath}`);
           resolve({ success: true, path: outputPath });
         } else {
-          console.warn(`[Transcode NVENC] Falhou com código ${code}, tentando fallback CPU...`);
+          console.warn(`[Transcode] ${hw.encoderLabel} falhou com código ${code}, tentando fallback CPU...`);
           runCpuFallback();
         }
       });
@@ -131,7 +245,7 @@ export function transcodeToWebCompatible(inputPath, outputPath) {
       proc.on('error', reject);
     };
 
-    runNvenc();
+    runHardware();
   });
 }
 
@@ -368,7 +482,8 @@ export function executeRender({
   useNvenc = true,
   onProgress = () => {}
 }) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    const hw = await detectHardwareCapabilities();
     const args = ['-y'];
 
     const hiddenTrackIds = new Set((tracks || []).filter(t => t.visible === false).map(t => t.id));
@@ -659,8 +774,16 @@ export function executeRender({
       args.push('-an');
     }
 
-    if (useNvenc) {
-      args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '21', '-b:v', '0');
+    if (useNvenc && hw.isHardwareAccelerated) {
+      if (hw.encoderType === 'nvenc') {
+        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '21', '-b:v', '0');
+      } else if (hw.encoderType === 'qsv') {
+        args.push('-c:v', 'h264_qsv', '-global_quality', '22', '-preset', 'medium');
+      } else if (hw.encoderType === 'amf') {
+        args.push('-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cqp', '-qp_i', '22', '-qp_p', '22');
+      } else {
+        args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '21');
+      }
     } else {
       args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '20');
     }
@@ -712,7 +835,8 @@ export function executeRender({
 }
 
 export function generateQuickPreview({ inputVideo, startTime = 0, enhancement = 'whatsapp_turbo', outputVideo }) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    const hw = await detectHardwareCapabilities();
     const args = ['-y', '-ss', String(startTime), '-i', inputVideo, '-t', '3'];
 
     const filters = [];
@@ -732,7 +856,17 @@ export function generateQuickPreview({ inputVideo, startTime = 0, enhancement = 
       args.push('-vf', filters.join(','));
     }
 
-    args.push('-c:v', 'h264_nvenc', '-preset', 'p2', '-c:a', 'aac', '-movflags', '+faststart', outputVideo);
+    if (hw.encoderType === 'nvenc') {
+      args.push('-c:v', 'h264_nvenc', '-preset', 'p2');
+    } else if (hw.encoderType === 'qsv') {
+      args.push('-c:v', 'h264_qsv', '-preset', 'veryfast');
+    } else if (hw.encoderType === 'amf') {
+      args.push('-c:v', 'h264_amf', '-quality', 'speed');
+    } else {
+      args.push('-c:v', 'libx264', '-preset', 'ultrafast');
+    }
+
+    args.push('-c:a', 'aac', '-movflags', '+faststart', outputVideo);
 
     const proc = spawn(getFFmpegPath(), args);
     let stderr = '';

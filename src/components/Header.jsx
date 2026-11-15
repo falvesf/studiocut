@@ -9,8 +9,19 @@ export default function Header({
   undo = () => {},
   redo = () => {},
   canUndo = false,
-  canRedo = false
+  canRedo = false,
+  systemInfo = null
 }) {
+  const gpuName = systemInfo?.gpuName || 'GPU Acelerada';
+  const encoderLabel = systemInfo?.encoderLabel || 'NVENC';
+  const encoderType = systemInfo?.encoderType || 'nvenc';
+
+  // Format clean GPU display name (short and readable)
+  const cleanGpuName = gpuName
+    .replace('Laptop GPU', '')
+    .replace('(R)', '')
+    .replace('Graphics', '')
+    .trim();
   return (
     <header className="h-14 border-b border-slate-800 bg-[#121520] px-4 flex items-center justify-between z-20">
       <div className="flex items-center gap-3">
@@ -62,9 +73,30 @@ export default function Header({
         </div>
 
         <div className="hidden lg:flex items-center gap-2 ml-2 pl-3 border-l border-slate-800 text-xs text-slate-400">
-          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            RTX 4070 NVENC Ativo
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border ${
+              encoderType === 'nvenc'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                : encoderType === 'qsv'
+                ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25'
+                : encoderType === 'amf'
+                ? 'bg-rose-500/10 text-rose-400 border-rose-500/25'
+                : 'bg-slate-700/20 text-slate-300 border-slate-700/40'
+            }`}
+            title={`GPU Detectada: ${gpuName} • Codificador Ativo: ${encoderLabel}`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                encoderType === 'nvenc'
+                  ? 'bg-emerald-400'
+                  : encoderType === 'qsv'
+                  ? 'bg-cyan-400'
+                  : encoderType === 'amf'
+                  ? 'bg-rose-400'
+                  : 'bg-slate-400'
+              }`}
+            />
+            <span>{cleanGpuName} ({encoderLabel} Ativo)</span>
           </span>
           <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
             <Zap className="w-3 h-3" />

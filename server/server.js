@@ -12,7 +12,8 @@ import {
   generateSrtContent,
   generateQuickPreview,
   extractAudio,
-  transcodeToWebCompatible
+  transcodeToWebCompatible,
+  detectHardwareCapabilities
 } from './ffmpegHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,15 +66,40 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// System Status Endpoint
-app.get('/api/status', (req, res) => {
-  const hasWhisperModel = fs.existsSync(WHISPER_MODEL);
-  res.json({
-    status: 'online',
-    whisperModelLoaded: hasWhisperModel,
-    gpuAcceleration: 'NVIDIA NVENC (RTX 4070)',
-    ffmpegAvailable: true
-  });
+// System & Hardware Status Endpoint (Auto-Detects GPU, NVENC, QSV, AMF, CPU)
+app.get('/api/status', async (req, res) => {
+  try {
+    const hasWhisperModel = fs.existsSync(WHISPER_MODEL);
+    const hw = await detectHardwareCapabilities();
+    res.json({
+      status: 'online',
+      whisperModelLoaded: hasWhisperModel,
+      gpuAcceleration: hw.encoderLabel,
+      gpuName: hw.gpuName,
+      encoder: hw.encoder,
+      encoderType: hw.encoderType,
+      encoderLabel: hw.encoderLabel,
+      isHardwareAccelerated: hw.isHardwareAccelerated,
+      ffmpegAvailable: true
+    });
+  } catch (err) {
+    res.json({
+      status: 'online',
+      whisperModelLoaded: false,
+      gpuAcceleration: 'CPU Multi-Core',
+      gpuName: 'Processador Universal',
+      encoder: 'libx264',
+      encoderType: 'cpu',
+      encoderLabel: 'CPU Multi-Core',
+      isHardwareAccelerated: false,
+      ffmpegAvailable: true
+    });
+  }
+});
+
+app.get('/api/system-info', async (req, res) => {
+  const hw = await detectHardwareCapabilities();
+  res.json({ success: true, ...hw });
 });
 
 // List all files in uploads directory (Media Pool)

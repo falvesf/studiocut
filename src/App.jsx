@@ -183,7 +183,16 @@ export default function App() {
     }
   }, [clips]);
 
-  // Load existing media on start
+  // Hardware & GPU info (auto-detected on startup)
+  const [systemInfo, setSystemInfo] = useState({
+    gpuName: 'NVIDIA GeForce RTX 4070 Laptop GPU',
+    encoder: 'h264_nvenc',
+    encoderType: 'nvenc',
+    encoderLabel: 'NVIDIA NVENC',
+    isHardwareAccelerated: true
+  });
+
+  // Load existing media and probe hardware on start
   useEffect(() => {
     fetch('/api/media')
       .then(res => res.json())
@@ -193,6 +202,21 @@ export default function App() {
         }
       })
       .catch(err => console.error('Erro ao listar mídias:', err));
+
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.gpuName) {
+          setSystemInfo({
+            gpuName: data.gpuName,
+            encoder: data.encoder,
+            encoderType: data.encoderType,
+            encoderLabel: data.encoderLabel,
+            isHardwareAccelerated: data.isHardwareAccelerated !== false
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleVideoUpload = async (e) => {
@@ -443,6 +467,7 @@ export default function App() {
         redo={redo}
         canUndo={canUndo}
         canRedo={canRedo}
+        systemInfo={systemInfo}
       />
 
       <input
@@ -657,6 +682,7 @@ export default function App() {
         isRendering={isRendering}
         renderProgress={renderProgress}
         renderedResult={renderedResult}
+        systemInfo={systemInfo}
       />
     </div>
   );
