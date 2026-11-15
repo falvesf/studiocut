@@ -1,0 +1,746 @@
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+
+const FFMPEG_BIN = 'C:\\Users\\falve\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffmpeg.exe';
+const FFPROBE_BIN = 'C:\\Users\\falve\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.2-full_build\\bin\\ffprobe.exe';
+
+export function getFFmpegPath() {
+  return fs.existsSync(FFMPEG_BIN) ? FFMPEG_BIN : 'ffmpeg';
+}
+
+export function getFFprobePath() {
+  return fs.existsSync(FFPROBE_BIN) ? FFPROBE_BIN : 'ffprobe';
+}
+
+export function probeMedia(filePath) {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn(getFFprobePath(), [
+      '-v', 'error',
+      '-show_entries', 'format=format_name,duration,size,bit_rate:stream=index,codec_type,codec_name,pix_fmt,width,height,r_frame_rate,duration,channels',
+      '-of', 'json',
+      filePath
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+
+    ffprobe.stdout.on('data', data => { stdout += data.toString(); });
+    ffprobe.stderr.on('data', data => { stderr += data.toString(); });
+
+    ffprobe.on('close', code => {
+      if (code !== 0) {
+        return reject(new Error(`ffprobe failed (${code}): ${stderr}`));
+      }
+      try {
+        const data = JSON.parse(stdout);
+        const videoStream = data.streams?.find(s => s.codec_type === 'video');
+        const audioStream = data.streams?.find(s => s.codec_type === 'audio');
+
+        let fps = 30;
+        if (videoStream?.r_frame_rate) {
+          const parts = videoStream.r_frame_rate.split('/');
+          if (parts.length === 2 && parseFloat(parts[1]) > 0) {
+            fps = Math.round(parseFloat(parts[0]) / parseFloat(parts[1]));
+          }
+        }
+
+        const duration = parseFloat(data.format?.duration || videoStream?.duration || audioStream?.duration || 0);
+
+        resolve({
+          duration,
+          width: videoStream?.width || 0,
+          height: videoStream?.height || 0,
+          fps,
+          codec: videoStream?.codec_name || '',
+          pixFmt: videoStream?.pix_fmt || '',
+          formatName: data.format?.format_name || '',
+          hasVideo: !!videoStream,
+          hasAudio: !!audioStream,
+          audioCodec: audioStream?.codec_name || '',
+          audioChannels: audioStream?.channels || 0,
+          sizeBytes: parseInt(data.format?.size || 0, 10),
+          bitrate: parseInt(data.format?.bit_rate || 0, 10),
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+// Ensure video/audio is 100% browser-playable (H.264/AAC MP4) via RTX 4070 NVENC
+export function transcodeToWebCompatible(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    console.log(`[Transcode NVENC] Convertendo mídia incompatível com navegador para H.264/AAC: ${inputPath}`);
+
+    const runNvenc = () => {
+      const args = [
+        '-y',
+        '-i', inputPath,
+        '-c:v', 'h264_nvenc',
+        '-preset', 'p4',
+        '-cq', '22',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-movflags', '+faststart',
+        outputPath
+      ];
+
+      const proc = spawn(getFFmpegPath(), args);
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', code => {
+        if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+          console.log(`[Transcode NVENC] Concluído com sucesso: ${outputPath}`);
+          resolve({ success: true, path: outputPath });
+        } else {
+          console.warn(`[Transcode NVENC] Falhou com código ${code}, tentando fallback CPU...`);
+          runCpuFallback();
+        }
+      });
+      proc.on('error', () => runCpuFallback());
+    };
+
+    const runCpuFallback = () => {
+      const args = [
+        '-y',
+        '-i', inputPath,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '22',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-movflags', '+faststart',
+        outputPath
+      ];
+
+      const proc = spawn(getFFmpegPath(), args);
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.on('close', code => {
+        if (code === 0 && fs.existsSync(outputPath)) {
+          console.log(`[Transcode CPU] Concluído com sucesso: ${outputPath}`);
+          resolve({ success: true, path: outputPath });
+        } else {
+          reject(new Error(`Falha ao converter vídeo para web: ${stderr}`));
+        }
+      });
+      proc.on('error', reject);
+    };
+
+    runNvenc();
+  });
+}
+
+// Extract Audio track from video into standalone MP3
+export function extractAudio(inputVideo, outputAudio) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(getFFmpegPath(), [
+      '-y',
+      '-i', inputVideo,
+      '-vn',
+      '-c:a', 'libmp3lame',
+      '-q:a', '2',
+      outputAudio
+    ]);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', d => { stderr += d.toString(); });
+    ffmpeg.on('close', code => {
+      if (code === 0) resolve({ success: true, outputAudio });
+      else reject(new Error(`Erro ao extrair áudio (${code}): ${stderr}`));
+    });
+    ffmpeg.on('error', reject);
+  });
+}
+
+export function parseSrt(srtContent) {
+  const normalized = srtContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (!normalized) return [];
+
+  const blocks = normalized.split(/\n\s*\n/);
+  const subtitles = [];
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
+
+    let timeLine = lines[1];
+    let textStartIndex = 2;
+
+    if (!timeLine.includes('-->') && lines[0].includes('-->')) {
+      timeLine = lines[0];
+      textStartIndex = 1;
+    }
+
+    const timeMatch = timeLine.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/);
+    if (!timeMatch) continue;
+
+    const start = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]) + parseInt(timeMatch[4]) / 1000;
+    const end = parseInt(timeMatch[5]) * 3600 + parseInt(timeMatch[6]) * 60 + parseInt(timeMatch[7]) + parseInt(timeMatch[8]) / 1000;
+    const text = lines.slice(textStartIndex).join(' ').trim();
+
+    if (text) {
+      subtitles.push({
+        id: subtitles.length + 1,
+        start,
+        end,
+        text
+      });
+    }
+  }
+
+  return subtitles;
+}
+
+export function transcribeWhisper(filePath, modelPath, language = 'pt') {
+  return new Promise((resolve, reject) => {
+    const tempSrt = path.join(path.dirname(filePath), `whisper_${Date.now()}.srt`);
+    const formattedModel = modelPath.replace(/\\/g, '/');
+    const formattedDest = tempSrt.replace(/\\/g, '/');
+
+    const filterArg = `whisper=model=${formattedModel}:language=${language}:format=srt:destination=${formattedDest}`;
+
+    const ffmpeg = spawn(getFFmpegPath(), [
+      '-y',
+      '-i', filePath,
+      '-af', filterArg,
+      '-f', 'null',
+      '-'
+    ]);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', data => { stderr += data.toString(); });
+
+    ffmpeg.on('close', code => {
+      if (fs.existsSync(tempSrt)) {
+        try {
+          const content = fs.readFileSync(tempSrt, 'utf-8');
+          fs.unlinkSync(tempSrt);
+          const parsed = parseSrt(content);
+          return resolve(parsed);
+        } catch (e) {
+          return reject(e);
+        }
+      }
+
+      if (code !== 0) {
+        return reject(new Error(`Transcrição falhou (${code}): ${stderr}`));
+      }
+      resolve([]);
+    });
+  });
+}
+
+export function detectSilences(filePath, noiseDb = -30, minDuration = 0.5) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn(getFFmpegPath(), [
+      '-i', filePath,
+      '-af', `silencedetect=n=${noiseDb}dB:d=${minDuration}`,
+      '-f', 'null',
+      '-'
+    ]);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', data => { stderr += data.toString(); });
+
+    ffmpeg.on('close', () => {
+      const silences = [];
+      const regexStart = /silence_start: ([\d.]+)/g;
+      const regexEnd = /silence_end: ([\d.]+) \| silence_duration: ([\d.]+)/g;
+
+      const starts = [];
+      let match;
+      while ((match = regexStart.exec(stderr)) !== null) {
+        starts.push(parseFloat(match[1]));
+      }
+
+      let i = 0;
+      while ((match = regexEnd.exec(stderr)) !== null && i < starts.length) {
+        const end = parseFloat(match[1]);
+        const dur = parseFloat(match[2]);
+        silences.push({
+          start: starts[i],
+          end,
+          duration: dur
+        });
+        i++;
+      }
+
+      resolve(silences);
+    });
+  });
+}
+
+export function generateSrtContent(subtitles) {
+  return subtitles.map((sub, index) => {
+    const formatTime = (sec) => {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const ms = Math.floor((sec % 1) * 1000);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    };
+    return `${index + 1}\n${formatTime(sub.start)} --> ${formatTime(sub.end)}\n${sub.text.trim()}\n`;
+  }).join('\n');
+}
+
+export function generateAssContent(subtitles, style = {}) {
+  const primaryColor = style.primaryColor || '&H0000FFFF';
+  const outlineColor = style.outlineColor || '&H00000000';
+  const fontSize = style.fontSize || 22;
+  const bold = style.bold ? -1 : 0;
+  const outline = style.outlineWidth || 3;
+  const shadow = style.shadow || 1;
+
+  const formatAssTime = (sec) => {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    const cs = Math.floor((sec % 1) * 100);
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+  };
+
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: CapCutStyle,Montserrat,${fontSize * 2.2},${primaryColor},&H000000FF,${outlineColor},&H80000000,${bold},0,0,0,100,100,0,0,1,${outline * 2},${shadow * 2},2,50,50,70,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const events = subtitles.map(sub => {
+    const cleanText = sub.text.replace(/\r?\n/g, '\\N');
+    return `Dialogue: 0,${formatAssTime(sub.start)},${formatAssTime(sub.end)},CapCutStyle,,0,0,0,,${cleanText}`;
+  }).join('\n');
+
+  return header + events;
+}
+
+function buildAtempoFilter(speed) {
+  if (!speed || speed === 1.0) return '';
+  let s = speed;
+  const filters = [];
+  while (s > 2.0) {
+    filters.push('atempo=2.0');
+    s /= 2.0;
+  }
+  while (s < 0.5) {
+    filters.push('atempo=0.5');
+    s /= 0.5;
+  }
+  filters.push(`atempo=${s.toFixed(3)}`);
+  return filters.join(',');
+}
+
+export function executeRender({
+  inputVideo,
+  outputVideo,
+  clips = null,
+  tracks = [],
+  trim = null,
+  targetAspect = 'original', // 'original' | '9:16' | '16:9' | '1:1' | '4:5'
+  backgroundLayer = null, // { path, type }
+  logoOverlay = null, // { path, position: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'center', scale: 15, opacity: 100 }
+  muteOriginal = false,
+  originalVolume = 1.0,
+  audioFadeIn = 0,
+  audioFadeOut = 0,
+  audioTrack = null,
+  audioVolume = 1.0,
+  audioLoop = false,
+  enhancement = 'none',
+  verticalAspect = false,
+  transitions = { fadeIn: 0, fadeOut: 0 },
+  subtitles = [],
+  subtitleStyle = {},
+  resolution = 'original',
+  totalDuration = 0,
+  useNvenc = true,
+  onProgress = () => {}
+}) {
+  return new Promise((resolve, reject) => {
+    const args = ['-y'];
+
+    const hiddenTrackIds = new Set((tracks || []).filter(t => t.visible === false).map(t => t.id));
+    const mutedTrackIds = new Set((tracks || []).filter(t => t.muted === true).map(t => t.id));
+
+    let activeClips = [];
+    if (clips && clips.length > 0) {
+      activeClips = clips.filter(c => c.end > c.start && !hiddenTrackIds.has(c.trackId));
+    } else if (trim) {
+      activeClips = [{ start: trim.start || 0, end: trim.end || totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
+    } else {
+      activeClips = [{ start: 0, end: totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
+    }
+
+    // Collect all unique video inputs
+    const uniqueVideos = [];
+    activeClips.forEach(c => {
+      const v = c.videoPath || inputVideo;
+      if (!uniqueVideos.includes(v)) uniqueVideos.push(v);
+    });
+
+    // Add video inputs
+    uniqueVideos.forEach(v => {
+      args.push('-i', v);
+    });
+
+    const videoInputMap = {};
+    uniqueVideos.forEach((v, idx) => {
+      videoInputMap[v] = idx;
+    });
+
+    // Audio input index if audioTrack exists
+    let audioInputIdx = -1;
+    if (audioTrack && fs.existsSync(audioTrack)) {
+      audioInputIdx = uniqueVideos.length;
+      if (audioLoop) args.push('-stream_loop', '-1');
+      args.push('-i', audioTrack);
+    }
+
+    // Background Layer input index (Layer 1 - Bottom)
+    let bgInputIdx = -1;
+    if (backgroundLayer && backgroundLayer.path && fs.existsSync(backgroundLayer.path)) {
+      bgInputIdx = uniqueVideos.length + (audioInputIdx !== -1 ? 1 : 0);
+      if (backgroundLayer.type === 'video') {
+        args.push('-stream_loop', '-1');
+      } else {
+        args.push('-loop', '1');
+      }
+      args.push('-i', backgroundLayer.path);
+    }
+
+    // Image/Logo input index (Layer 3 - Top)
+    let logoInputIdx = -1;
+    if (logoOverlay && logoOverlay.path && fs.existsSync(logoOverlay.path)) {
+      logoInputIdx = uniqueVideos.length + (audioInputIdx !== -1 ? 1 : 0) + (bgInputIdx !== -1 ? 1 : 0);
+      args.push('-i', logoOverlay.path);
+    }
+
+    // Effective duration
+    const effectiveDuration = activeClips.reduce((acc, c) => {
+      const dur = c.end - c.start;
+      const spd = c.speed || 1.0;
+      return acc + (dur / spd);
+    }, 0);
+
+    let tempAssFile = null;
+    if (subtitles && subtitles.length > 0) {
+      tempAssFile = path.join(path.dirname(outputVideo), `subs_${Date.now()}.ass`);
+      fs.writeFileSync(tempAssFile, generateAssContent(subtitles, subtitleStyle), 'utf-8');
+    }
+
+    // Dimensions based on targetAspect
+    let canvasW = 0;
+    let canvasH = 0;
+    if (targetAspect === '9:16') {
+      canvasW = 1080; canvasH = 1920;
+    } else if (targetAspect === '16:9') {
+      canvasW = 1920; canvasH = 1080;
+    } else if (targetAspect === '1:1') {
+      canvasW = 1080; canvasH = 1080;
+    } else if (targetAspect === '4:5') {
+      canvasW = 1080; canvasH = 1350;
+    }
+
+    const filterParts = [];
+    const clipLabelsV = [];
+    const clipLabelsA = [];
+
+    activeClips.forEach((c, idx) => {
+      const vSrc = videoInputMap[c.videoPath || inputVideo] || 0;
+      const dur = c.end - c.start;
+      const speed = c.speed || 1.0;
+      const scaledDur = dur / speed;
+      const vLabel = `v${idx}`;
+      const aLabel = `a${idx}`;
+
+      let vFilters = `trim=start=${c.start}:end=${c.end},setpts=PTS-STARTPTS`;
+      let aFilters = `atrim=start=${c.start}:end=${c.end},asetpts=PTS-STARTPTS`;
+
+      if (speed !== 1.0) {
+        vFilters += `,setpts=(1/${speed})*PTS`;
+        const aTempoStr = buildAtempoFilter(speed);
+        if (aTempoStr) aFilters += `,${aTempoStr}`;
+      }
+
+      // Zoom / Scale / Position (Transform) & Target Canvas Placement
+      const scaleVal = c.scale || 100;
+      const posX = (c.posX || 0) / 100;
+      const posY = (c.posY || 0) / 100;
+      const factor = scaleVal / 100;
+
+      if (canvasW > 0 && canvasH > 0) {
+        // 1. High-fidelity Lanczos scaling: scale base fit multiplied by factor
+        vFilters += `,scale=w='if(gt(a,${canvasW}/${canvasH}),max(16,round(${canvasW}*${factor}/2)*2),-2)':h='if(gt(a,${canvasW}/${canvasH}),-2,max(16,round(${canvasH}*${factor}/2)*2))':flags=lanczos`;
+
+        // 2. Crop excess if larger than canvas (offset by posX, posY)
+        vFilters += `,crop=min(in_w\\,${canvasW}):min(in_h\\,${canvasH}):max(0\\,min(in_w-${canvasW}\\,(in_w-${canvasW})/2-(${posX}*in_w))):max(0\\,min(in_h-${canvasH}\\,(in_h-${canvasH})/2-(${posY}*in_h)))`;
+
+        // 3. Pad to canvas if smaller than canvas (transparent if bgLayer, else black)
+        const padColor = bgInputIdx !== -1 ? 'color=black@0' : 'black';
+        const formatStr = bgInputIdx !== -1 ? ',format=rgba' : '';
+        vFilters += `${formatStr},pad=${canvasW}:${canvasH}:(${canvasW}-iw)/2+(${posX}*${canvasW}):(${canvasH}-ih)/2+(${posY}*${canvasH}):${padColor},setsar=1`;
+      } else if (scaleVal > 100) {
+        vFilters += `,scale=iw*${factor}:ih*${factor}:flags=lanczos,crop=iw/${factor}:ih/${factor}:(iw-iw/${factor})/2+(${posX}*iw):(ih-ih/${factor})/2+(${posY}*ih)`;
+      }
+
+      // Per-clip enhancement (Hardware RTX & High-Fidelity Filters)
+      const clipEnhance = c.enhancement || enhancement;
+      if (clipEnhance === 'cas_rtx') {
+        // Contrast Adaptive Sharpening (AMD/NVIDIA FidelityFX CAS) - Perfect for zoomed/stretched footage
+        vFilters += `,cas=strength=0.8,unsharp=5:5:0.6:5:5:0.0`;
+      } else if (clipEnhance === 'whatsapp_turbo') {
+        vFilters += `,hqdn3d=2.0:1.5:3.0:2.5,cas=strength=0.7,unsharp=5:5:0.8:5:5:0.0,eq=contrast=1.06:brightness=0.01:saturation=1.06`;
+      } else if (clipEnhance === 'sharpen') {
+        vFilters += `,cas=strength=0.75,unsharp=5:5:1.1:5:5:0.0`;
+      } else if (clipEnhance === 'denoise') {
+        vFilters += `,hqdn3d=3.0:2.5:4.0:3.5`;
+      } else if (clipEnhance === 'super_1080p') {
+        vFilters += `,scale=w='max(1920,in_w)':h=-2:flags=lanczos,cas=strength=0.85,unsharp=5:5:0.7:5:5:0.0`;
+      }
+
+      // Transitions & Per-Clip Fades
+      if (c.fadeIn > 0 && scaledDur > c.fadeIn) {
+        vFilters += `,fade=t=in:st=0:d=${c.fadeIn}`;
+        aFilters += `,afade=t=in:st=0:d=${c.fadeIn}`;
+      }
+      if (c.fadeOut > 0 && scaledDur > c.fadeOut) {
+        vFilters += `,fade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
+        aFilters += `,afade=t=out:st=${scaledDur - c.fadeOut}:d=${c.fadeOut}`;
+      }
+
+      if (c.transitionToNext === 'fade' && scaledDur > 0.6) {
+        vFilters += `,fade=t=out:st=${scaledDur - 0.5}:d=0.5`;
+      }
+      if (idx > 0 && activeClips[idx - 1].transitionToNext === 'fade' && scaledDur > 0.6) {
+        vFilters += `,fade=t=in:st=0:d=0.5`;
+      }
+
+      // Per-Clip Audio Volume & Track Mute
+      if (mutedTrackIds.has(c.trackId) || c.muted) {
+        aFilters += `,volume=0`;
+      } else if (c.volume !== undefined && c.volume !== 1.0) {
+        aFilters += `,volume=${c.volume}`;
+      }
+
+      filterParts.push(`[${vSrc}:v]${vFilters}[${vLabel}]`);
+      filterParts.push(`[${vSrc}:a]${aFilters}[${aLabel}]`);
+      clipLabelsV.push(`[${vLabel}]`);
+      clipLabelsA.push(`[${aLabel}]`);
+    });
+
+    const concatVIn = clipLabelsV.join('');
+    const concatAIn = clipLabelsA.join('');
+    filterParts.push(`${concatVIn}${concatAIn}concat=n=${activeClips.length}:v=1:a=1[basev][basea]`);
+
+    // Global video filters
+    const postVFilters = [];
+    const hasPerClipEnhance = activeClips.some(c => c.enhancement && c.enhancement !== 'none');
+
+    if (!hasPerClipEnhance) {
+      if (enhancement === 'whatsapp_turbo') {
+        postVFilters.push('hqdn3d=2.0:1.5:3.0:2.5');
+        postVFilters.push('unsharp=5:5:1.2:5:5:0.0');
+        postVFilters.push('eq=contrast=1.06:brightness=0.02:saturation=1.08');
+      } else if (enhancement === 'sharpen') {
+        postVFilters.push('unsharp=5:5:1.3:5:5:0.0');
+      } else if (enhancement === 'denoise') {
+        postVFilters.push('hqdn3d=3.0:2.5:4.0:3.5');
+      } else if (enhancement === 'super_1080p') {
+        postVFilters.push('scale=1920:1080:flags=lanczos');
+        postVFilters.push('unsharp=5:5:0.9:5:5:0.0');
+      }
+    }
+
+    if (!verticalAspect && targetAspect === 'original') {
+      if (resolution === '1080p' && enhancement !== 'super_1080p') {
+        postVFilters.push('scale=-2:1080:flags=lanczos');
+      } else if (resolution === '720p') {
+        postVFilters.push('scale=-2:720:flags=lanczos');
+      } else if (resolution === '4k') {
+        postVFilters.push('scale=-2:2160:flags=lanczos');
+      }
+    }
+
+    if (transitions?.fadeIn > 0) {
+      postVFilters.push(`fade=t=in:st=0:d=${transitions.fadeIn}`);
+    }
+    if (transitions?.fadeOut > 0 && effectiveDuration > transitions.fadeOut) {
+      postVFilters.push(`fade=t=out:st=${effectiveDuration - transitions.fadeOut}:d=${transitions.fadeOut}`);
+    }
+
+    if (tempAssFile) {
+      const escapedPath = tempAssFile.replace(/\\/g, '/').replace(/:/g, '\\:');
+      postVFilters.push(`ass='${escapedPath}'`);
+    }
+
+    let currentVTarget = 'basev';
+    if (postVFilters.length > 0) {
+      filterParts.push(`[${currentVTarget}]${postVFilters.join(',')}[vfilt]`);
+      currentVTarget = 'vfilt';
+    }
+
+    if (verticalAspect) {
+      filterParts.push(`[${currentVTarget}]split=2[bgsrc][fgsrc]`);
+      filterParts.push(`[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg]`);
+      filterParts.push(`[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg]`);
+      filterParts.push(`[bg][fg]overlay=(W-w)/2:(H-h)/2[finalv]`);
+      currentVTarget = 'finalv';
+    }
+
+    // Background Layer (Layer 1 - Bottom)
+    if (bgInputIdx !== -1) {
+      const targetW = canvasW || 1920;
+      const targetH = canvasH || 1080;
+      filterParts.push(`[${bgInputIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}[bgScaled]`);
+      filterParts.push(`[bgScaled][${currentVTarget}]overlay=0:0:shortest=1[vWithBg]`);
+      currentVTarget = 'vWithBg';
+    }
+
+    // Logo / Image Overlay (Layer 3 - Top)
+    if (logoInputIdx !== -1) {
+      const scalePct = (logoOverlay.scale || 15) / 100;
+      const opacityVal = (logoOverlay.opacity || 100) / 100;
+      filterParts.push(`[${logoInputIdx}:v]scale=iw*${scalePct}:-1,format=rgba,colorchannelmixer=aa=${opacityVal}[logoScaled]`);
+
+      let overlayPos = 'W-w-30:30';
+      if (logoOverlay.position === 'top-left') overlayPos = '30:30';
+      else if (logoOverlay.position === 'bottom-right') overlayPos = 'W-w-30:H-h-30';
+      else if (logoOverlay.position === 'bottom-left') overlayPos = '30:H-h-30';
+      else if (logoOverlay.position === 'center') overlayPos = '(W-w)/2:(H-h)/2';
+
+      filterParts.push(`[${currentVTarget}][logoScaled]overlay=${overlayPos}[vWithLogo]`);
+      currentVTarget = 'vWithLogo';
+    }
+
+    // Audio Pipeline
+    const hasOriginalAudio = !muteOriginal && originalVolume > 0;
+    let currentATarget = 'basea';
+
+    const aFiltersList = [];
+    if (originalVolume !== 1.0) aFiltersList.push(`volume=${originalVolume}`);
+    if (audioFadeIn > 0) aFiltersList.push(`afade=t=in:st=0:d=${audioFadeIn}`);
+    if (audioFadeOut > 0 && effectiveDuration > audioFadeOut) {
+      aFiltersList.push(`afade=t=out:st=${effectiveDuration - audioFadeOut}:d=${audioFadeOut}`);
+    }
+
+    if (aFiltersList.length > 0) {
+      filterParts.push(`[${currentATarget}]${aFiltersList.join(',')}[aorig]`);
+      currentATarget = 'aorig';
+    }
+
+    if (audioInputIdx !== -1 && hasOriginalAudio) {
+      filterParts.push(`[${audioInputIdx}:a]volume=${audioVolume}[abgm]`);
+      filterParts.push(`[${currentATarget}][abgm]amix=inputs=2:duration=first[finala]`);
+      currentATarget = 'finala';
+    } else if (audioInputIdx !== -1 && !hasOriginalAudio) {
+      filterParts.push(`[${audioInputIdx}:a]volume=${audioVolume}[finala]`);
+      currentATarget = 'finala';
+    }
+
+    args.push('-filter_complex', filterParts.join(';'));
+    args.push('-map', `[${currentVTarget}]`);
+
+    if (hasOriginalAudio || audioInputIdx !== -1) {
+      args.push('-map', `[${currentATarget}]`);
+      args.push('-c:a', 'aac', '-b:a', '192k');
+    } else {
+      args.push('-an');
+    }
+
+    if (useNvenc) {
+      args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '21', '-b:v', '0');
+    } else {
+      args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '20');
+    }
+
+    args.push('-t', String(effectiveDuration));
+    args.push('-movflags', '+faststart');
+    args.push(outputVideo);
+
+    const ffmpegProc = spawn(getFFmpegPath(), args);
+
+    let stderr = '';
+    const timeRegex = /time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/;
+
+    ffmpegProc.stderr.on('data', data => {
+      const chunk = data.toString();
+      stderr += chunk;
+
+      const match = chunk.match(timeRegex);
+      if (match && effectiveDuration > 0) {
+        const hours = parseFloat(match[1]);
+        const mins = parseFloat(match[2]);
+        const secs = parseFloat(match[3]);
+        const currentTime = hours * 3600 + mins * 60 + secs;
+        const percent = Math.min(99, Math.round((currentTime / effectiveDuration) * 100));
+        onProgress({ percent, currentTime, totalDuration: effectiveDuration });
+      }
+    });
+
+    ffmpegProc.on('close', code => {
+      if (tempAssFile && fs.existsSync(tempAssFile)) {
+        try { fs.unlinkSync(tempAssFile); } catch {}
+      }
+
+      if (code === 0) {
+        onProgress({ percent: 100, currentTime: effectiveDuration, totalDuration: effectiveDuration });
+        resolve({ success: true, outputPath: outputVideo });
+      } else {
+        reject(new Error(`Renderização FFmpeg falhou (${code}): ${stderr}`));
+      }
+    });
+
+    ffmpegProc.on('error', err => {
+      if (tempAssFile && fs.existsSync(tempAssFile)) {
+        try { fs.unlinkSync(tempAssFile); } catch {}
+      }
+      reject(err);
+    });
+  });
+}
+
+export function generateQuickPreview({ inputVideo, startTime = 0, enhancement = 'whatsapp_turbo', outputVideo }) {
+  return new Promise((resolve, reject) => {
+    const args = ['-y', '-ss', String(startTime), '-i', inputVideo, '-t', '3'];
+
+    const filters = [];
+    if (enhancement === 'cas_rtx') {
+      filters.push('cas=strength=0.85,unsharp=5:5:0.7:5:5:0.0');
+    } else if (enhancement === 'whatsapp_turbo') {
+      filters.push('hqdn3d=2.0:1.5:3.0:2.5,cas=strength=0.7,unsharp=5:5:0.8:5:5:0.0,eq=contrast=1.06:brightness=0.02:saturation=1.08,scale=1920:1080:flags=lanczos');
+    } else if (enhancement === 'super_1080p') {
+      filters.push('scale=1920:1080:flags=lanczos,cas=strength=0.8,unsharp=5:5:0.7:5:5:0.0');
+    } else if (enhancement === 'sharpen') {
+      filters.push('cas=strength=0.75,unsharp=5:5:1.1:5:5:0.0');
+    } else if (enhancement === 'denoise') {
+      filters.push('hqdn3d=3.0:2.5:4.0:3.5');
+    }
+
+    if (filters.length > 0) {
+      args.push('-vf', filters.join(','));
+    }
+
+    args.push('-c:v', 'h264_nvenc', '-preset', 'p2', '-c:a', 'aac', '-movflags', '+faststart', outputVideo);
+
+    const proc = spawn(getFFmpegPath(), args);
+    let stderr = '';
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', code => {
+      if (code === 0) resolve({ success: true, outputVideo });
+      else reject(new Error(`Erro ao gerar prévia (${code}): ${stderr}`));
+    });
+    proc.on('error', reject);
+  });
+}
