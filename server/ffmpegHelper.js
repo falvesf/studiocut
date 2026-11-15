@@ -177,12 +177,28 @@ export function probeMedia(filePath) {
   });
 }
 
+// Parse FFmpeg stderr time=HH:MM:SS.xx into seconds
+function parseFfmpegTimeSeconds(chunk) {
+  const match = chunk.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/);
+  if (!match) return null;
+  return parseInt(match[1], 10) * 3600 + parseInt(match[2], 10) * 60 + parseFloat(match[3]);
+}
+
 // Ensure video/audio is 100% browser-playable (H.264/AAC MP4) via hardware acceleration with CPU fallback
-export async function transcodeToWebCompatible(inputPath, outputPath) {
+export async function transcodeToWebCompatible(inputPath, outputPath, onProgress = null, totalDuration = 0) {
   const hw = await detectHardwareCapabilities();
 
   return new Promise((resolve, reject) => {
     console.log(`[Transcode] Convertendo mídia com codificador ${hw.encoderLabel}: ${inputPath}`);
+
+    const emitProgress = (chunk, encoderLabel) => {
+      if (!onProgress || !totalDuration || totalDuration <= 0) return;
+      const sec = parseFfmpegTimeSeconds(chunk);
+      if (sec !== null) {
+        const percent = Math.min(99, Math.max(1, Math.round((sec / totalDuration) * 100)));
+        onProgress({ percent, encoderLabel });
+      }
+    };
 
     const runHardware = () => {
       const args = [
@@ -202,13 +218,18 @@ export async function transcodeToWebCompatible(inputPath, outputPath) {
 
       args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', outputPath);
 
+      if (onProgress) onProgress({ percent: 1, encoderLabel: hw.encoderLabel });
       const proc = spawn(getFFmpegPath(), args);
       let stderr = '';
-      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.stderr.on('data', d => {
+        const text = d.toString();
+        stderr += text;
+        emitProgress(text, hw.encoderLabel);
+      });
       proc.on('close', code => {
         if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
           console.log(`[Transcode] Concluído com sucesso (${hw.encoderLabel}): ${outputPath}`);
-          resolve({ success: true, path: outputPath });
+          resolve({ success: true, path: outputPath, encoderLabel: hw.encoderLabel });
         } else {
           console.warn(`[Transcode] ${hw.encoderLabel} falhou com código ${code}, tentando fallback CPU...`);
           runCpuFallback();
@@ -231,13 +252,18 @@ export async function transcodeToWebCompatible(inputPath, outputPath) {
         outputPath
       ];
 
+      if (onProgress) onProgress({ percent: 1, encoderLabel: 'CPU (x264)' });
       const proc = spawn(getFFmpegPath(), args);
       let stderr = '';
-      proc.stderr.on('data', d => { stderr += d.toString(); });
+      proc.stderr.on('data', d => {
+        const text = d.toString();
+        stderr += text;
+        emitProgress(text, 'CPU (x264)');
+      });
       proc.on('close', code => {
         if (code === 0 && fs.existsSync(outputPath)) {
           console.log(`[Transcode CPU] Concluído com sucesso: ${outputPath}`);
-          resolve({ success: true, path: outputPath });
+          resolve({ success: true, path: outputPath, encoderLabel: 'CPU (x264)' });
         } else {
           reject(new Error(`Falha ao converter vídeo para web: ${stderr}`));
         }

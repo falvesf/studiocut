@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { FolderPlus, Film, Music, Image as ImageIcon, Plus, Trash2, RefreshCw, Layers, ShieldCheck, Check } from 'lucide-react';
+import { FolderPlus, Film, Music, Image as ImageIcon, Plus, Trash2, RefreshCw, Layers, ShieldCheck, Check, Cpu, Loader2 } from 'lucide-react';
+import { uploadMediaWithProgress } from '../utils/uploadHelper.js';
 
 export default function MediaPanel({
   mediaList = [],
@@ -15,6 +16,7 @@ export default function MediaPanel({
 }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState(null);
 
   // Load existing files from uploads directory on mount
   const loadMedia = async () => {
@@ -35,28 +37,19 @@ export default function MediaPanel({
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    if (files.length === 0 || uploading) return;
     setUploading(true);
 
     for (const file of files) {
-      const formData = new FormData();
-      formData.append('file', file);
-
       try {
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
-        if (data.success) {
-          // If project was empty, optionally initialize
-        }
+        await uploadMediaWithProgress(file, setUploadStatus);
       } catch (err) {
         console.error('Erro no upload de mídia:', err);
       }
     }
 
     await loadMedia();
+    setUploadStatus(null);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -109,11 +102,38 @@ export default function MediaPanel({
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="w-full py-2.5 px-3 rounded-xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-950/20 hover:bg-indigo-950/40 text-indigo-200 font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-950/30 disabled:opacity-50"
+          className="w-full py-2.5 px-3 rounded-xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-950/20 hover:bg-indigo-950/40 text-indigo-200 font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-indigo-950/30 disabled:opacity-50 disabled:cursor-wait"
         >
           <Plus className="w-4 h-4 text-cyan-300" />
-          <span>{uploading ? 'Enviando arquivos...' : '+ Importar Vídeo, Áudio ou Imagem'}</span>
+          <span>{uploading ? 'Processando arquivo...' : '+ Importar Vídeo, Áudio ou Imagem'}</span>
         </button>
+
+        {uploadStatus && (
+          <div className="mt-2.5 p-3 rounded-xl bg-slate-900/90 border border-indigo-500/30 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-300 truncate">
+                {uploadStatus.stage === 'transcoding' ? (
+                  <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse shrink-0" />
+                ) : (
+                  <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0" />
+                )}
+                <span className="truncate">{uploadStatus.fileName}</span>
+              </span>
+              <span className="text-[11px] font-bold text-cyan-300 tabular-nums">
+                {uploadStatus.percent || 0}%
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300"
+                style={{ width: `${Math.max(4, uploadStatus.percent || 0)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-slate-300 leading-snug">
+              {uploadStatus.message}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Media cards list */}

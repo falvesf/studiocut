@@ -184,8 +184,34 @@ app.delete('/api/media/:filename', (req, res) => {
   }
 });
 
-// Upload Video, Audio, or Image File (Auto-Transcodes non-browser codecs like HEVC via NVENC)
+const uploadProgressClients = new Map();
+
+function sendUploadProgress(uploadId, payload) {
+  if (!uploadId) return;
+  const res = uploadProgressClients.get(uploadId);
+  if (res) {
+    try {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    } catch (e) {}
+  }
+}
+
+app.get('/api/upload-progress/:uploadId', (req, res) => {
+  const { uploadId } = req.params;
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  uploadProgressClients.set(uploadId, res);
+  req.on('close', () => {
+    uploadProgressClients.delete(uploadId);
+  });
+});
+
+// Upload Video, Audio, or Image File (Auto-Transcodes non-browser codecs like HEVC via Hardware/CPU)
 app.post('/api/upload', upload.single('file'), async (req, res) => {
+  const uploadId = req.query.uploadId ? String(req.query.uploadId) : null;
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
@@ -195,6 +221,12 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     try {
       originalUtf8 = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
     } catch (e) {}
+
+    sendUploadProgress(uploadId, {
+      stage: 'probing',
+      percent: 5,
+      message: 'Analisando codec e formato do arquivo...'
+    });
 
     let filePath = req.file.path;
     let filename = req.file.filename;
@@ -218,12 +250,33 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       (!info.hasAudio || ['aac', 'mp3'].includes(info.audioCodec));
 
     if (type === 'video' && !isBrowserCompatible) {
-      console.log(`[Upload] Vídeo com codec incompatível com navegador (${info.codec}, ${info.pixFmt}). Transcodificando via RTX 4070 NVENC...`);
+      const codecName = (info.codec || ext.replace('.', '') || 'desconhecido').toUpperCase();
+      console.log(`[Upload] Vídeo com codec incompatível com navegador (${info.codec}, ${info.pixFmt}). Transcodificando via hardware...`);
       const webFilename = `web_${path.basename(filename, ext)}.mp4`;
       const webPath = path.join(UPLOADS_DIR, webFilename);
 
+      sendUploadProgress(uploadId, {
+        stage: 'transcoding',
+        percent: 1,
+        codec: codecName,
+        message: `Codec ${codecName} detectado. Iniciando decodificação por hardware para o player...`
+      });
+
       try {
-        await transcodeToWebCompatible(filePath, webPath);
+        await transcodeToWebCompatible(
+          filePath,
+          webPath,
+          ({ percent, encoderLabel }) => {
+            sendUploadProgress(uploadId, {
+              stage: 'transcoding',
+              percent,
+              codec: codecName,
+              encoder: encoderLabel,
+              message: `Decodificando codec ${codecName} via ${encoderLabel}... ${percent}%`
+            });
+          },
+          info.duration || 0
+        );
         if (fs.existsSync(webPath) && fs.statSync(webPath).size > 1000) {
           filePath = webPath;
           filename = webFilename;
@@ -234,6 +287,12 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         console.error('[Upload] Erro durante transcodificação web:', transcodeErr);
       }
     }
+
+    sendUploadProgress(uploadId, {
+      stage: 'done',
+      percent: 100,
+      message: 'Vídeo pronto no player!'
+    });
 
     res.json({
       success: true,
@@ -247,6 +306,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     });
   } catch (err) {
     console.error('Erro no upload/probe:', err);
+    sendUploadProgress(uploadId, { stage: 'error', message: err.message });
     res.status(500).json({ error: err.message });
   }
 });

@@ -14,7 +14,8 @@ export default function Header({
   projectName = 'Sem título',
   saveStatus = 'idle',
   onSaveClick = () => {},
-  onProjectsClick = () => {}
+  onProjectsClick = () => {},
+  isImporting = false
 }) {
   const gpuName = systemInfo?.gpuName || 'GPU Acelerada';
   const encoderLabel = systemInfo?.encoderLabel || 'NVENC';
@@ -148,10 +149,15 @@ export default function Header({
 
         <button
           onClick={onUploadClick}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition border border-slate-700 hover:border-slate-600 cursor-pointer"
+          disabled={isImporting}
+          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition border ${
+            isImporting
+              ? 'bg-slate-800/60 text-indigo-300 border-indigo-500/40 cursor-wait opacity-80'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 hover:border-slate-600 cursor-pointer'
+          }`}
         >
-          <Upload className="w-4 h-4 text-slate-300" />
-          <span>{hasVideo ? 'Trocar Vídeo' : 'Importar Vídeo'}</span>
+          <Upload className={`w-4 h-4 ${isImporting ? 'text-indigo-400 animate-bounce' : 'text-slate-300'}`} />
+          <span>{isImporting ? 'Processando...' : hasVideo ? 'Trocar Vídeo' : 'Importar Vídeo'}</span>
         </button>
 
         <button

@@ -10,8 +10,11 @@ import {
   ZoomIn,
   Gauge,
   FolderPlus,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Cpu,
+  Loader2
 } from 'lucide-react';
+import { uploadMediaWithProgress } from './utils/uploadHelper.js';
 
 import Header from './components/Header.jsx';
 import Player from './components/Player.jsx';
@@ -95,6 +98,7 @@ export default function App() {
   const [projectName, setProjectName] = useState('Sem título');
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
+  const [importProgress, setImportProgress] = useState(null); // { fileName, stage, percent, codec, encoder, message }
   const hasRestoredRef = useRef(false);
 
   // Export Modal State
@@ -482,17 +486,10 @@ export default function App() {
 
   const handleVideoUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
+    if (!file || importProgress) return;
 
     try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
+      const data = await uploadMediaWithProgress(file, setImportProgress);
       if (data.success) {
         setVideoFile(file);
         setVideoUrl(data.url);
@@ -516,9 +513,10 @@ export default function App() {
           }
         ]);
 
+        const newClipId = `clip_${Date.now()}`;
         setClips([
           {
-            id: `clip_${Date.now()}`,
+            id: newClipId,
             trackId: 'track_1',
             start: 0,
             end: dur,
@@ -536,7 +534,7 @@ export default function App() {
             muted: false
           }
         ]);
-        setSelectedClipId(`clip_${Date.now()}`);
+        setSelectedClipId(newClipId);
         setCurrentTime(0);
         setSubtitles([]);
         setSilences([]);
@@ -544,7 +542,10 @@ export default function App() {
         alert('Erro no envio do arquivo: ' + (data.error || 'Desconhecido'));
       }
     } catch (err) {
-      alert('Erro de conexão ao enviar vídeo: ' + err.message);
+      alert('Erro ao importar vídeo: ' + err.message);
+    } finally {
+      setImportProgress(null);
+      if (e.target) e.target.value = '';
     }
   };
 
@@ -739,6 +740,7 @@ export default function App() {
           }
         }}
         onProjectsClick={() => setIsProjectsOpen(true)}
+        isImporting={!!importProgress}
       />
 
       <input
@@ -967,6 +969,56 @@ export default function App() {
         onLoadProject={handleLoadProject}
         onNewProject={handleNewProject}
       />
+
+      {/* Video Import & Hardware Transcode Progress Overlay */}
+      {importProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                {importProgress.stage === 'transcoding' ? (
+                  <Cpu className="w-6 h-6 animate-pulse" />
+                ) : (
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {importProgress.stage === 'transcoding'
+                    ? 'Decodificando Vídeo pelo Hardware...'
+                    : importProgress.stage === 'probing'
+                      ? 'Analisando Codec & Formato...'
+                      : 'Importando Vídeo...'}
+                </h3>
+                <p className="text-xs text-slate-400 truncate mt-0.5" title={importProgress.fileName}>
+                  {importProgress.fileName}
+                </p>
+              </div>
+              <span className="text-sm font-bold text-indigo-400 tabular-nums shrink-0">
+                {importProgress.percent || 0}%
+              </span>
+            </div>
+
+            <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700/60">
+              <div
+                className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300"
+                style={{ width: `${Math.max(4, importProgress.percent || 0)}%` }}
+              />
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3.5 py-2.5 space-y-1">
+              <p className="text-xs font-medium text-slate-200">
+                {importProgress.message || 'Preparando arquivo para reprodução no editor...'}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {importProgress.stage === 'transcoding'
+                  ? 'Este vídeo usa um codec não nativo do navegador. Estamos convertendo via aceleração de hardware para garantir reprodução fluida na timeline.'
+                  : 'Aguarde um instante — o vídeo abrirá no player automaticamente.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
