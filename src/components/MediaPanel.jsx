@@ -458,10 +458,13 @@ export default function MediaPanel({
                                 controls
                                 autoPlay
                                 playsInline
-                                muted
                                 onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
                                 onWaiting={() => setPreviewBuffering(true)}
-                                onCanPlay={() => setPreviewBuffering(false)}
+                                onCanPlay={(e) => {
+                                  setPreviewBuffering(false);
+                                  e.currentTarget.muted = false;
+                                  e.currentTarget.play().catch(() => {});
+                                }}
                                 onPlaying={() => setPreviewBuffering(false)}
                                 onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
                                 className="w-full max-h-40 rounded-lg bg-black border border-slate-700"
