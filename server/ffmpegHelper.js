@@ -491,7 +491,9 @@ export function executeRender({
 
     let activeClips = [];
     if (clips && clips.length > 0) {
-      activeClips = clips.filter(c => c.end > c.start && !hiddenTrackIds.has(c.trackId));
+      activeClips = clips
+        .filter(c => c.end > c.start && !hiddenTrackIds.has(c.trackId))
+        .sort((a, b) => (a.timelineStart || 0) - (b.timelineStart || 0));
     } else if (trim) {
       activeClips = [{ start: trim.start || 0, end: trim.end || totalDuration, transitionToNext: 'none', videoPath: inputVideo }];
     } else {
@@ -607,7 +609,9 @@ export function executeRender({
         const formatStr = bgInputIdx !== -1 ? ',format=rgba' : '';
         vFilters += `${formatStr},pad=${canvasW}:${canvasH}:(${canvasW}-iw)/2+(${posX}*${canvasW}):(${canvasH}-ih)/2+(${posY}*${canvasH}):${padColor},setsar=1`;
       } else if (scaleVal > 100) {
-        vFilters += `,scale=iw*${factor}:ih*${factor}:flags=lanczos,crop=iw/${factor}:ih/${factor}:(iw-iw/${factor})/2+(${posX}*iw):(ih-ih/${factor})/2+(${posY}*ih)`;
+        vFilters += `,scale=iw*${factor}:ih*${factor}:flags=lanczos,crop=iw/${factor}:ih/${factor}:(iw-iw/${factor})/2+(${posX}*iw):(ih-ih/${factor})/2+(${posY}*ih),setsar=1`;
+      } else {
+        vFilters += `,setsar=1`;
       }
 
       // Per-clip enhancement (Hardware RTX & High-Fidelity Filters)
@@ -655,9 +659,8 @@ export function executeRender({
       clipLabelsA.push(`[${aLabel}]`);
     });
 
-    const concatVIn = clipLabelsV.join('');
-    const concatAIn = clipLabelsA.join('');
-    filterParts.push(`${concatVIn}${concatAIn}concat=n=${activeClips.length}:v=1:a=1[basev][basea]`);
+    const concatInputs = clipLabelsV.map((vLbl, idx) => `${vLbl}${clipLabelsA[idx]}`).join('');
+    filterParts.push(`${concatInputs}concat=n=${activeClips.length}:v=1:a=1[basev][basea]`);
 
     // Global video filters
     const postVFilters = [];
