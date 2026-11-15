@@ -607,8 +607,8 @@ app.get('/api/stock/search', async (req, res) => {
       return res.json({ success: true, items, source: 'Openverse' });
     }
 
-    // Video search without API key via Wikimedia Commons
-    const wmUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q + ' filetype:video')}&gsrlimit=15&prop=videoinfo&viprop=url|mime|size|duration|thumburl&iiurlwidth=320&format=json&origin=*`;
+    // Video search without API key via Wikimedia Commons (preferring browser-playable mp4/webm)
+    const wmUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(q + ' filetype:video')}&gsrlimit=20&prop=videoinfo&viprop=url|mime|size|duration|thumburl&iiurlwidth=320&format=json&origin=*`;
     const resp = await fetch(wmUrl, {
       headers: { 'User-Agent': 'StudioCut/1.0 (local video editor)' }
     });
@@ -617,6 +617,11 @@ app.get('/api/stock/search', async (req, res) => {
     const items = pages.map((p) => {
       const vi = p.videoinfo?.[0];
       if (!vi || !vi.url) return null;
+      const lowerUrl = vi.url.toLowerCase();
+      const mime = String(vi.mime || '').toLowerCase();
+      if (!lowerUrl.endsWith('.webm') && !lowerUrl.endsWith('.mp4') && !mime.includes('webm') && !mime.includes('mp4')) {
+        return null;
+      }
       return {
         id: `wm_v_${p.pageid}`,
         title: String(p.title || '').replace(/^File:/i, '').replace(/\.[^.]+$/, ''),
@@ -632,6 +637,29 @@ app.get('/api/stock/search', async (req, res) => {
   } catch (err) {
     console.error('[Stock Search] Erro:', err);
     res.status(500).json({ error: 'Falha ao buscar mídias online: ' + err.message });
+  }
+});
+
+// Proxy thumbnails/previews to avoid external hotlink/CORS blocks in browser
+app.get('/api/stock/proxy', async (req, res) => {
+  const targetUrl = String(req.query.url || '').trim();
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    return res.status(400).end();
+  }
+  try {
+    const upstream = await fetch(targetUrl, {
+      headers: { 'User-Agent': 'StudioCut/1.0 (local video editor)' }
+    });
+    if (!upstream.ok) {
+      return res.status(upstream.status).end();
+    }
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.send(buf);
+  } catch (err) {
+    res.status(502).end();
   }
 });
 

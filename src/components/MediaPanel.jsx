@@ -28,6 +28,9 @@ export default function MediaPanel({
   const [isSearchingStock, setIsSearchingStock] = useState(false);
   const [importingStockId, setImportingStockId] = useState(null);
   const [previewAudioId, setPreviewAudioId] = useState(null);
+  const [previewVideoId, setPreviewVideoId] = useState(null);
+  const [previewBuffering, setPreviewBuffering] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
   const [showKeyBox, setShowKeyBox] = useState(false);
   const [pixabayKey, setPixabayKey] = useState(() => localStorage.getItem('studiocut_pixabay_key') || '');
 
@@ -354,14 +357,19 @@ export default function MediaPanel({
                     <div className="flex items-center gap-2.5">
                       {item.thumbnail ? (
                         <img
-                          src={item.thumbnail}
+                          src={`/api/stock/proxy?url=${encodeURIComponent(item.thumbnail)}`}
                           alt=""
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
                           className="w-12 h-10 rounded-lg object-cover bg-slate-800 shrink-0"
                         />
                       ) : (
                         <div className="w-12 h-10 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
                           {stockType === 'audio' ? (
                             <Music className="w-4 h-4 text-cyan-400" />
+                          ) : stockType === 'image' ? (
+                            <ImageIcon className="w-4 h-4 text-emerald-400" />
                           ) : (
                             <Film className="w-4 h-4 text-indigo-400" />
                           )}
@@ -378,22 +386,92 @@ export default function MediaPanel({
                     </div>
 
                     {stockType === 'audio' && (
-                      <div className="flex items-center gap-1.5">
+                      <div className="space-y-1.5">
                         {previewAudioId === item.id ? (
-                          <audio
-                            src={item.url}
-                            controls
-                            autoPlay
-                            className="w-full h-7"
-                          />
+                          <div className="space-y-1">
+                            {previewBuffering && (
+                              <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Carregando áudio em buffer...</span>
+                              </div>
+                            )}
+                            {previewError === item.id ? (
+                              <p className="text-[10px] text-rose-400">
+                                Prévia indisponível neste servidor externo.
+                              </p>
+                            ) : (
+                              <audio
+                                src={item.url}
+                                controls
+                                autoPlay
+                                onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
+                                onWaiting={() => setPreviewBuffering(true)}
+                                onCanPlay={() => setPreviewBuffering(false)}
+                                onPlaying={() => setPreviewBuffering(false)}
+                                onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
+                                className="w-full h-7"
+                              />
+                            )}
+                          </div>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => setPreviewAudioId(item.id)}
+                            onClick={() => {
+                              setPreviewError(null);
+                              setPreviewBuffering(true);
+                              setPreviewAudioId(item.id);
+                            }}
                             className="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
                           >
                             <Play className="w-3 h-3 text-emerald-400" />
                             Ouvir Prévia
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {stockType === 'video' && (
+                      <div className="space-y-1.5">
+                        {previewVideoId === item.id ? (
+                          <div className="space-y-1">
+                            {previewBuffering && (
+                              <div className="flex items-center gap-1.5 text-[10px] text-cyan-300">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Carregando vídeo em buffer...</span>
+                              </div>
+                            )}
+                            {previewError === item.id ? (
+                              <p className="text-[10px] text-rose-400">
+                                Prévia indisponível neste formato/link.
+                              </p>
+                            ) : (
+                              <video
+                                src={item.url}
+                                controls
+                                autoPlay
+                                playsInline
+                                muted
+                                onLoadStart={() => { setPreviewBuffering(true); setPreviewError(null); }}
+                                onWaiting={() => setPreviewBuffering(true)}
+                                onCanPlay={() => setPreviewBuffering(false)}
+                                onPlaying={() => setPreviewBuffering(false)}
+                                onError={() => { setPreviewBuffering(false); setPreviewError(item.id); }}
+                                className="w-full max-h-40 rounded-lg bg-black border border-slate-700"
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewError(null);
+                              setPreviewBuffering(true);
+                              setPreviewVideoId(item.id);
+                            }}
+                            className="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Play className="w-3 h-3 text-cyan-400" />
+                            Assistir Prévia
                           </button>
                         )}
                       </div>

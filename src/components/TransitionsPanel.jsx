@@ -15,12 +15,22 @@ export default function TransitionsPanel({
   const [activeCategory, setActiveCategory] = useState('all');
 
   const selectedClipIndex = clips.findIndex(c => c.id === selectedClipId);
-  const selectedClip = clips[selectedClipIndex] || clips[0];
+  const resolvedIndex = selectedClipIndex >= 0 ? selectedClipIndex : 0;
+  const selectedClip = clips[resolvedIndex];
+
+  // Order clips on the same track (or overall timeline) to find the next clip for 80% max duration
+  const sortedClips = [...clips].sort((a, b) => (a.timelineStart ?? a.start ?? 0) - (b.timelineStart ?? b.start ?? 0));
+  const sortedIdx = sortedClips.findIndex(c => c.id === selectedClip?.id);
+  const nextClip = sortedIdx >= 0 ? sortedClips[sortedIdx + 1] : null;
+  const durA = selectedClip ? (selectedClip.end - selectedClip.start) / (selectedClip.speed || 1.0) : 5;
+  const durB = nextClip ? (nextClip.end - nextClip.start) / (nextClip.speed || 1.0) : durA;
+  const minPairDur = Math.max(0.25, Math.min(durA, durB));
+  const maxTransitionDur = Math.max(0.2, +(minPairDur * 0.8).toFixed(1));
 
   const clipFadeIn = selectedClip?.fadeIn !== undefined ? selectedClip.fadeIn : (transitions?.fadeIn || 0);
   const clipFadeOut = selectedClip?.fadeOut !== undefined ? selectedClip.fadeOut : (transitions?.fadeOut || 0);
   const currentTransition = selectedClip?.transitionToNext || 'none';
-  const currentTransitionDur = selectedClip?.transitionDuration ?? 0.5;
+  const currentTransitionDur = Math.min(maxTransitionDur, selectedClip?.transitionDuration ?? Math.min(0.5, maxTransitionDur));
 
   const updateClipFade = (fields) => {
     if (selectedClip) {
@@ -127,7 +137,7 @@ export default function TransitionsPanel({
           })}
         </div>
 
-        {/* Transition Duration Slider */}
+        {/* Transition Duration Slider (up to 80% of the shorter clip) */}
         {currentTransition !== 'none' && (
           <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2">
             <div className="flex justify-between items-center">
@@ -140,12 +150,16 @@ export default function TransitionsPanel({
             <input
               type="range"
               min="0.2"
-              max="1.5"
+              max={maxTransitionDur}
               step="0.1"
               value={currentTransitionDur}
               onChange={(e) => applyTransitionDuration(e.target.value)}
               className="w-full accent-cyan-500 cursor-pointer"
             />
+            <div className="flex justify-between text-[9px] text-slate-500">
+              <span>0.2s (Rápida)</span>
+              <span>Máx: {maxTransitionDur.toFixed(1)}s (80% do menor trecho)</span>
+            </div>
           </div>
         )}
 

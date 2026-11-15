@@ -715,9 +715,10 @@ export function executeRender({
         const outA = isLast ? 'basea' : `xa${i}`;
 
         const trType = prevClip.transitionToNext;
-        if (VALID_XFADES_CHAIN.has(trType) && Math.min(prevDur, currDur) > 0.35) {
+        if (VALID_XFADES_CHAIN.has(trType) && Math.min(prevDur, currDur) > 0.3) {
           const requestedDur = Number(prevClip.transitionDuration) || 0.5;
-          const d = Math.min(requestedDur, Math.max(0.2, Math.min(prevDur, currDur) - 0.15));
+          const maxAllowedDur = Math.max(0.2, Math.min(prevDur, currDur) * 0.8);
+          const d = Math.min(requestedDur, maxAllowedDur);
           const offset = Math.max(0, accDur - d);
           filterParts.push(`[${curV}][${vNextIn}]xfade=transition=${trType}:duration=${d.toFixed(3)}:offset=${offset.toFixed(3)}[${outV}]`);
           filterParts.push(`[${curA}][${aNextIn}]acrossfade=d=${d.toFixed(3)}:c1=tri:c2=tri[${outA}]`);

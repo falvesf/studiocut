@@ -232,6 +232,108 @@ export default function Player({
   const isTurboActive = activeEnhancement === 'whatsapp_turbo';
   const isSuperActive = activeEnhancement === 'super_1080p';
 
+  // Live Transition Preview Calculation (runs smoothly during playback & scrubbing)
+  let trOpacity = 1;
+  let trTranslateX = 0;
+  let trTranslateY = 0;
+  let trScale = 1;
+  let trClipPath = undefined;
+  let trFlashColor = null;
+  let trFlashOpacity = 0;
+  let trBlur = 0;
+
+  if (activeClip && clips.length > 1) {
+    const orderedClips = [...clips]
+      .filter(c => c.end > c.start)
+      .sort((a, b) => (a.timelineStart ?? a.start ?? 0) - (b.timelineStart ?? b.start ?? 0));
+    const idxInOrdered = orderedClips.findIndex(c => c.id === activeClip.id);
+    if (idxInOrdered >= 0) {
+      const aStart = activeClip.timelineStart !== undefined ? activeClip.timelineStart : activeClip.start;
+      const aDur = (activeClip.end - activeClip.start) / (activeClip.speed || 1.0);
+      const aEnd = aStart + aDur;
+      const prevC = idxInOrdered > 0 ? orderedClips[idxInOrdered - 1] : null;
+      const nextC = idxInOrdered < orderedClips.length - 1 ? orderedClips[idxInOrdered + 1] : null;
+
+      let phase = null; // 'out' | 'in'
+      let trType = 'none';
+      let p = 0; // 0 -> 1
+
+      if (activeClip.transitionToNext && activeClip.transitionToNext !== 'none' && nextC) {
+        const nDur = (nextC.end - nextC.start) / (nextC.speed || 1.0);
+        const trDur = Math.min(Number(activeClip.transitionDuration) || 0.5, Math.max(0.2, Math.min(aDur, nDur) * 0.8));
+        const half = trDur / 2;
+        if (currentTime >= aEnd - half && currentTime <= aEnd + 0.05) {
+          phase = 'out';
+          trType = activeClip.transitionToNext;
+          p = Math.min(1, Math.max(0, (currentTime - (aEnd - half)) / half));
+        }
+      }
+
+      if (!phase && prevC && prevC.transitionToNext && prevC.transitionToNext !== 'none') {
+        const pDur = (prevC.end - prevC.start) / (prevC.speed || 1.0);
+        const trDur = Math.min(Number(prevC.transitionDuration) || 0.5, Math.max(0.2, Math.min(pDur, aDur) * 0.8));
+        const half = trDur / 2;
+        if (currentTime >= aStart && currentTime <= aStart + half) {
+          phase = 'in';
+          trType = prevC.transitionToNext;
+          p = Math.min(1, Math.max(0, (currentTime - aStart) / half));
+        }
+      }
+
+      if (phase && trType !== 'none') {
+        const amtOut = p;         // 0 -> 1
+        const amtIn = 1 - p;      // 1 -> 0
+        const amt = phase === 'out' ? amtOut : amtIn;
+
+        if (trType === 'fade' || trType === 'dissolve') {
+          trOpacity = 1 - amt;
+        } else if (trType === 'fadeblack') {
+          trFlashColor = '#000000';
+          trFlashOpacity = amt;
+        } else if (trType === 'fadewhite') {
+          trFlashColor = '#ffffff';
+          trFlashOpacity = amt;
+        } else if (trType === 'slideleft' || trType === 'smoothleft') {
+          trTranslateX = phase === 'out' ? -amtOut * 100 : amtIn * 100;
+          if (trType === 'smoothleft') trOpacity = 1 - amt * 0.6;
+        } else if (trType === 'slideright' || trType === 'smoothright') {
+          trTranslateX = phase === 'out' ? amtOut * 100 : -amtIn * 100;
+          if (trType === 'smoothright') trOpacity = 1 - amt * 0.6;
+        } else if (trType === 'slideup') {
+          trTranslateY = phase === 'out' ? -amtOut * 100 : amtIn * 100;
+        } else if (trType === 'slidedown') {
+          trTranslateY = phase === 'out' ? amtOut * 100 : -amtIn * 100;
+        } else if (trType === 'wipeleft') {
+          trClipPath = phase === 'out' ? `inset(0 ${amtOut * 100}% 0 0)` : `inset(0 0 0 ${amtIn * 100}%)`;
+        } else if (trType === 'wiperight') {
+          trClipPath = phase === 'out' ? `inset(0 0 0 ${amtOut * 100}%)` : `inset(0 ${amtIn * 100}% 0 0)`;
+        } else if (trType === 'wipeup') {
+          trClipPath = phase === 'out' ? `inset(0 0 ${amtOut * 100}% 0)` : `inset(${amtIn * 100}% 0 0 0)`;
+        } else if (trType === 'wipedown') {
+          trClipPath = phase === 'out' ? `inset(${amtOut * 100}% 0 0 0)` : `inset(0 0 ${amtIn * 100}% 0)`;
+        } else if (trType === 'horzopen') {
+          const pct = amt * 50;
+          trClipPath = `inset(0 ${pct}% 0 ${pct}%)`;
+        } else if (trType === 'vertopen') {
+          const pct = amt * 50;
+          trClipPath = `inset(${pct}% 0 ${pct}% 0)`;
+        } else if (trType === 'circleopen' || trType === 'circleclose' || trType === 'radial') {
+          const radius = (1 - amt) * 75;
+          trClipPath = `circle(${radius}% at 50% 50%)`;
+        } else if (trType === 'zoomin') {
+          trScale = phase === 'out' ? 1 + amtOut * 0.45 : 1 + amtIn * 0.45;
+          trOpacity = 1 - amt * 0.7;
+        } else if (trType === 'pixelize') {
+          trBlur = amt * 8;
+          trOpacity = 1 - amt * 0.5;
+        } else if (trType === 'diagtl') {
+          const diag = (1 - amt) * 200;
+          trClipPath = `polygon(0 0, ${diag}% 0, 0 ${diag}%)`;
+        }
+      }
+    }
+  }
+
   return (
     <div
       ref={containerRef}
@@ -380,28 +482,41 @@ export default function Player({
 
           {videoUrl ? (
             <>
-              {/* Main Video element with per-clip transform and enhancement */}
+              {/* Main Video element with per-clip transform, live transition preview and enhancement */}
               <video
                 ref={videoRef}
                 src={activeClip?.videoUrl || videoUrl}
                 style={{
-                  transform: `scale(${scaleRatio}) translate(${transX}%, ${transY}%)`,
+                  transform: `scale(${scaleRatio * trScale}) translate(${transX + trTranslateX}%, ${transY + trTranslateY}%)`,
+                  opacity: trOpacity,
+                  clipPath: trClipPath,
                   transition: 'transform 0.05s ease-out',
                   display: isCurrentTrackVisible ? 'block' : 'none',
                   imageRendering: (isCasActive || isTurboActive || isSuperActive) ? '-webkit-optimize-contrast' : undefined,
-                  filter: isCasActive
-                    ? 'url(#video-cas-sharp) contrast(1.10) saturate(1.08)'
-                    : isTurboActive
-                    ? 'url(#video-turbo-sharp) contrast(1.08) saturate(1.10)'
-                    : isSuperActive
-                    ? 'contrast(1.06) saturate(1.06)'
-                    : undefined
+                  filter: [
+                    isCasActive
+                      ? 'url(#video-cas-sharp) contrast(1.10) saturate(1.08)'
+                      : isTurboActive
+                      ? 'url(#video-turbo-sharp) contrast(1.08) saturate(1.10)'
+                      : isSuperActive
+                      ? 'contrast(1.06) saturate(1.06)'
+                      : '',
+                    trBlur > 0 ? `blur(${trBlur.toFixed(1)}px)` : ''
+                  ].filter(Boolean).join(' ') || undefined
                 }}
                 className="w-full h-full object-contain relative z-10 cursor-pointer"
                 muted={isCurrentTrackMuted}
                 playsInline
                 onClick={togglePlay}
               />
+
+              {/* Live Transition Flash / Fade Overlay */}
+              {trFlashColor && trFlashOpacity > 0.01 && (
+                <div
+                  className="absolute inset-0 z-15 pointer-events-none"
+                  style={{ backgroundColor: trFlashColor, opacity: trFlashOpacity }}
+                />
+              )}
 
               {/* If current track is hidden, show overlay placeholder */}
               {!isCurrentTrackVisible && (
