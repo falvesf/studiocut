@@ -116,7 +116,7 @@ export default function Player({
     videoRef.current.muted = clipMuted;
     videoRef.current.volume = clipMuted
       ? 0
-      : Math.min(1, Math.max(0, activeClip?.volume !== undefined ? activeClip.volume : originalVolume));
+      : Math.min(1, Math.max(0, activeClip?.volume !== undefined ? activeClip.volume : 1.0));
 
     // Set playback rate
     videoRef.current.playbackRate = activeClip.speed || 1.0;
@@ -147,7 +147,7 @@ export default function Player({
         videoRef.current.pause();
       }
     }
-  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.volume, muteOriginal, originalVolume]);
+  }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.volume, muteOriginal]);
 
   // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
   useEffect(() => {
