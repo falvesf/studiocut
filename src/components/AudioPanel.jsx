@@ -13,6 +13,8 @@ export default function AudioPanel({
   setAudioFadeOut = () => {},
   audioTrack,
   setAudioTrack,
+  audioTracks = [{ id: 'atrack_1', name: 'Áudio 1', muted: false, locked: false }],
+  setAudioTracks = () => {},
   audioClips = [],
   setAudioClips = () => {},
   selectedAudioClipId = null,
@@ -96,6 +98,27 @@ export default function AudioPanel({
     }
   };
 
+  const pickAvailableAudioTrackId = (startSec, durSec) => {
+    const endSec = startSec + durSec;
+    for (const tr of audioTracks) {
+      const overlaps = audioClips.some(ac => {
+        if ((ac.audioTrackId || 'atrack_1') !== tr.id) return false;
+        const aS = ac.timelineStart || 0;
+        const aE = aS + ((ac.end - ac.start) / (ac.speed || 1));
+        return startSec < aE - 0.05 && endSec > aS + 0.05;
+      });
+      if (!overlaps) return tr.id;
+    }
+    const newTrack = {
+      id: `atrack_${Date.now()}`,
+      name: `Áudio ${audioTracks.length + 1}`,
+      muted: false,
+      locked: false
+    };
+    setAudioTracks(prev => [...prev, newTrack]);
+    return newTrack.id;
+  };
+
   const handleAudioUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -110,12 +133,32 @@ export default function AudioPanel({
       });
       const data = await res.json();
       if (data.success) {
+        const dur = data.info?.duration || 10;
+        const trackId = pickAvailableAudioTrackId(0, dur);
+        const newClip = {
+          id: `aclip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          audioTrackId: trackId,
+          name: data.originalName,
+          path: data.path,
+          url: data.url,
+          duration: dur,
+          start: 0,
+          end: dur,
+          timelineStart: 0,
+          volume: 1.0,
+          speed: 1.0,
+          fadeIn: 0,
+          fadeOut: 0,
+          muted: false
+        };
         setAudioTrack({
           name: data.originalName,
           path: data.path,
           url: data.url,
-          duration: data.info?.duration || 0
+          duration: dur
         });
+        setAudioClips(prev => [...prev, newClip]);
+        setSelectedAudioClipId(newClip.id);
       }
     } catch (err) {
       showAlert('Erro ao enviar áudio: ' + err.message);
@@ -142,15 +185,18 @@ export default function AudioPanel({
       if (data.success) {
         const clipName = selectedClip?.videoName || 'Vídeo';
         const dur = data.duration || (selectedClip ? (selectedClip.end - selectedClip.start) : 0);
+        const tStart = selectedClip?.timelineStart ?? 0;
+        const trackId = pickAvailableAudioTrackId(tStart, dur);
         const newAudioClip = {
           id: `aclip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          audioTrackId: trackId,
           name: `Áudio: ${clipName}`,
           path: data.path,
           url: data.url,
           duration: dur,
           start: 0,
           end: dur,
-          timelineStart: selectedClip?.timelineStart ?? 0,
+          timelineStart: tStart,
           volume: selectedClip?.volume !== undefined ? selectedClip.volume : 1.0,
           speed: selectedClip?.speed || 1.0,
           fadeIn: 0,

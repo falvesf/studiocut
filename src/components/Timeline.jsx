@@ -126,6 +126,8 @@ export default function Timeline({
   videoRef,
   audioTrack = null,
   setAudioTrack = () => {},
+  audioTracks = [{ id: 'atrack_1', name: 'Áudio 1', muted: false, locked: false }],
+  setAudioTracks = () => {},
   audioClips = [],
   setAudioClips = () => {},
   selectedAudioClipId = null,
@@ -243,7 +245,37 @@ export default function Timeline({
     }
   };
 
-  // Drag horizontally to reposition an audio clip on the timeline
+  const handleAddAudioTrack = () => {
+    const newTrack = {
+      id: `atrack_${Date.now()}`,
+      name: `Áudio ${audioTracks.length + 1}`,
+      muted: false,
+      locked: false
+    };
+    setAudioTracks(prev => [...prev, newTrack]);
+    return newTrack;
+  };
+
+  const toggleAudioTrackMute = (trackId) => {
+    setAudioTracks(prev => prev.map(t => t.id === trackId ? { ...t, muted: !t.muted } : t));
+  };
+
+  const handleDeleteAudioTrack = async (trackId) => {
+    if (audioTracks.length <= 1) {
+      showAlert('Mantenha pelo menos 1 faixa de áudio.');
+      return;
+    }
+    const hasClips = audioClips.some(ac => (ac.audioTrackId || audioTracks[0]?.id) === trackId);
+    if (hasClips) {
+      const ok = await showConfirm('Excluir esta faixa de áudio e todos os trechos nela?');
+      if (!ok) return;
+    }
+    const nextTracks = audioTracks.filter(t => t.id !== trackId);
+    setAudioTracks(nextTracks);
+    setAudioClips(prev => prev.filter(ac => (ac.audioTrackId || audioTracks[0]?.id) !== trackId));
+  };
+
+  // Drag horizontally (timelineStart) and vertically (between audioTracks) for audio clips
   const handleAudioClipDragStart = (e, ac) => {
     if (e.button !== 0 || isDraggingTrim.current) return;
     e.preventDefault();
@@ -254,6 +286,8 @@ export default function Timeline({
 
     const startX = e.clientX;
     const origStart = ac.timelineStart || 0;
+    const origTrackId = ac.audioTrackId || audioTracks[0]?.id || 'atrack_1';
+    let targetAudioTrackId = origTrackId;
     const contentEl = timelineContentRef.current || trackAreaRef.current;
     const rect = contentEl ? contentEl.getBoundingClientRect() : { width: 1000 };
     const pxPerSec = rect.width / timelineViewDuration;
@@ -276,11 +310,33 @@ export default function Timeline({
         }
       }
       setSnapGuideTime(snapped);
-      setAudioClips(prev => prev.map(item => item.id === ac.id ? { ...item, timelineStart: nextStart } : item));
+
+      const audioRowEls = Array.from(document.querySelectorAll('[data-audio-track-id]'));
+      targetAudioTrackId = origTrackId;
+      for (const el of audioRowEls) {
+        const r = el.getBoundingClientRect();
+        if (moveEvent.clientY >= r.top && moveEvent.clientY <= r.bottom) {
+          targetAudioTrackId = el.getAttribute('data-audio-track-id');
+          break;
+        }
+      }
+      if (audioRowEls.length > 0 && moveEvent.clientY > audioRowEls[audioRowEls.length - 1].getBoundingClientRect().bottom + 4) {
+        targetAudioTrackId = '__new_audio_track__';
+      }
+
+      setAudioClips(prev => prev.map(item =>
+        item.id === ac.id
+          ? { ...item, timelineStart: nextStart, ...(targetAudioTrackId !== '__new_audio_track__' ? { audioTrackId: targetAudioTrackId } : {}) }
+          : item
+      ));
     };
 
     const onPointerUp = () => {
       setSnapGuideTime(null);
+      if (targetAudioTrackId === '__new_audio_track__') {
+        const created = handleAddAudioTrack();
+        setAudioClips(prev => prev.map(item => item.id === ac.id ? { ...item, audioTrackId: created.id } : item));
+      }
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
@@ -1280,38 +1336,71 @@ export default function Timeline({
             );
           })}
 
-          {/* Audio Track Header */}
-          <div
-            onClick={() => setActiveTab('audio')}
-            className="h-14 px-2 flex items-center justify-between hover:bg-slate-800/30 transition cursor-pointer border-t border-slate-800/80 shrink-0"
-          >
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <div className="min-w-0">
-                <span className="text-[11px] font-bold text-emerald-300 block truncate leading-tight">
-                  Trilha Sonora
-                </span>
-                <span className="text-[9px] text-slate-400 block truncate">
-                  {audioClips.length > 0 ? `${audioClips.length} trecho(s)` : (audioTrack?.url ? 'Áudio Ativo' : 'Música & Mix')}
-                </span>
-              </div>
-            </div>
-            {(audioClips.length > 0 || audioTrack?.url) && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setAudioClips([]);
-                  setSelectedAudioClipId(null);
-                  setAudioTrack(null);
-                }}
-                className="p-1 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
-                title="Remover todas as faixas de áudio"
+          {/* Audio Track Headers (Multi-track CapCut style) */}
+          {(audioTracks.length > 0 ? audioTracks : [{ id: 'atrack_1', name: 'Áudio 1', muted: false }]).map((aTrack, aIdx) => {
+            const countInTrack = audioClips.filter(ac => (ac.audioTrackId || (audioTracks[0]?.id || 'atrack_1')) === aTrack.id || (aIdx === 0 && !ac.audioTrackId)).length;
+            return (
+              <div
+                key={aTrack.id}
+                onClick={() => setActiveTab('audio')}
+                className={`h-14 px-2 flex items-center justify-between hover:bg-slate-800/30 transition cursor-pointer border-t border-slate-800/80 shrink-0 ${
+                  aTrack.muted ? 'opacity-60' : ''
+                }`}
               >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-bold text-emerald-300 block truncate leading-tight">
+                      {aTrack.name || `Áudio ${aIdx + 1}`}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block truncate font-mono">
+                      {countInTrack > 0 ? `${countInTrack} trecho(s)` : (aIdx === 0 && audioTrack?.url ? 'Áudio Ativo' : 'Livre')}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleAudioTrackMute(aTrack.id);
+                    }}
+                    className={`p-1 rounded transition cursor-pointer ${
+                      aTrack.muted ? 'text-rose-400 bg-rose-950/40' : 'text-slate-400 hover:text-emerald-300'
+                    }`}
+                    title={aTrack.muted ? 'Ativar som da faixa' : 'Mutar faixa de áudio'}
+                  >
+                    {aTrack.muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                  </button>
+                  {audioTracks.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteAudioTrack(aTrack.id);
+                      }}
+                      className="p-1 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
+                      title="Excluir faixa de áudio"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={handleAddAudioTrack}
+            className="h-7 px-2 border-t border-slate-800/60 flex items-center justify-between text-[10px] font-semibold bg-slate-950/40 hover:bg-slate-900 text-emerald-400/80 hover:text-emerald-300 transition cursor-pointer shrink-0"
+            title="Adicionar nova faixa de áudio para sobrepor voz, música ou efeitos"
+          >
+            <span className="flex items-center gap-1">
+              <Plus className="w-3 h-3" />
+              <span>Nova Faixa de Áudio</span>
+            </span>
+            <span>+</span>
+          </button>
         </div>
 
         {/* Right Area: Time Ruler & Track Lanes */}
@@ -1567,120 +1656,129 @@ export default function Timeline({
             );
           })}
 
-          {/* Audio Track Lane */}
-          <div className="h-14 relative px-1 py-1 flex items-center bg-slate-950/40 border-t border-slate-800/80 shrink-0">
-            {(() => {
-              const displayAudioClips = audioClips.length > 0
-                ? audioClips
-                : (audioTrack?.url ? [{
-                    id: 'legacy_audio',
-                    name: audioTrack.name || 'Trilha Sonora',
-                    url: audioTrack.url,
-                    path: audioTrack.path,
-                    duration: audioTrack.duration || projectDuration || 10,
-                    start: 0,
-                    end: audioTrack.duration || projectDuration || 10,
-                    timelineStart: audioTrack.timelineStart || 0,
-                    volume: 1,
-                    speed: 1,
-                    fadeIn: 0,
-                    fadeOut: 0,
-                    muted: false
-                  }] : []);
+          {/* Audio Track Lanes (Multi-track CapCut style) */}
+          {(audioTracks.length > 0 ? audioTracks : [{ id: 'atrack_1', name: 'Áudio 1', muted: false }]).map((aTrack, aIdx) => {
+            const trackAudioClips = audioClips.length > 0
+              ? audioClips.filter(ac => (ac.audioTrackId || (audioTracks[0]?.id || 'atrack_1')) === aTrack.id || (aIdx === 0 && !ac.audioTrackId))
+              : (aIdx === 0 && audioTrack?.url ? [{
+                  id: 'legacy_audio',
+                  audioTrackId: aTrack.id,
+                  name: audioTrack.name || 'Trilha Sonora',
+                  url: audioTrack.url,
+                  path: audioTrack.path,
+                  duration: audioTrack.duration || projectDuration || 10,
+                  start: 0,
+                  end: audioTrack.duration || projectDuration || 10,
+                  timelineStart: audioTrack.timelineStart || 0,
+                  volume: 1,
+                  speed: 1,
+                  fadeIn: 0,
+                  fadeOut: 0,
+                  muted: false
+                }] : []);
 
-              if (displayAudioClips.length === 0) {
-                return (
+            return (
+              <div
+                key={aTrack.id}
+                data-audio-track-id={aTrack.id}
+                className={`h-14 relative px-1 py-1 flex items-center bg-slate-950/40 border-t border-slate-800/80 shrink-0 ${
+                  aTrack.muted ? 'opacity-50' : ''
+                }`}
+              >
+                {trackAudioClips.length === 0 ? (
                   <div
                     onClick={() => setActiveTab('audio')}
-                    className="w-full h-full rounded border border-dashed border-slate-800 flex items-center justify-center text-[10px] text-slate-600 hover:text-slate-400 cursor-pointer transition"
+                    className="w-full h-full rounded border border-dashed border-slate-800/80 flex items-center justify-center text-[10px] text-slate-600 hover:text-slate-400 cursor-pointer transition"
                   >
-                    + Adicionar Trilha Sonora Independente
+                    + {aTrack.name || `Áudio ${aIdx + 1}`} — Arraste um áudio aqui ou clique para adicionar
                   </div>
-                );
-              }
+                ) : (
+                  trackAudioClips.map((ac) => {
+                    const aStart = ac.timelineStart || 0;
+                    const aSpeed = ac.speed || 1;
+                    const aSourceDur = Math.max(0.1, (ac.end || ac.duration || projectDuration || 10) - (ac.start || 0));
+                    const aDur = aSourceDur / aSpeed;
+                    const leftPct = Math.max(0, (aStart / timelineViewDuration) * 100);
+                    const widthPct = Math.max(2, Math.min(100 - leftPct, (aDur / timelineViewDuration) * 100));
+                    const isSelected = ac.id === selectedAudioClipId;
 
-              return displayAudioClips.map((ac) => {
-                const aStart = ac.timelineStart || 0;
-                const aSpeed = ac.speed || 1;
-                const aSourceDur = Math.max(0.1, (ac.end || ac.duration || projectDuration || 10) - (ac.start || 0));
-                const aDur = aSourceDur / aSpeed;
-                const leftPct = Math.max(0, (aStart / timelineViewDuration) * 100);
-                const widthPct = Math.max(2, Math.min(100 - leftPct, (aDur / timelineViewDuration) * 100));
-                const isSelected = ac.id === selectedAudioClipId;
+                    return (
+                      <div
+                        key={ac.id}
+                        onPointerDown={(e) => handleAudioClipDragStart(e, ac)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedClipId(null);
+                          setSelectedAudioClipId(ac.id);
+                          setActiveTab('audio');
+                        }}
+                        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                        className={`absolute top-1 bottom-1 rounded-md overflow-hidden select-none cursor-grab active:cursor-grabbing group transition-shadow ${
+                          isSelected
+                            ? 'bg-emerald-950/90 border-2 border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.4)] z-10'
+                            : 'bg-gradient-to-r from-emerald-900/80 to-emerald-950/80 border border-emerald-500/60 hover:border-emerald-400'
+                        }`}
+                      >
+                        <AudioClipWaveform
+                          url={ac.url}
+                          start={ac.start || 0}
+                          end={ac.end || ac.duration || aSourceDur}
+                          duration={ac.duration || aSourceDur}
+                          volume={ac.muted ? 0 : (ac.volume ?? 1)}
+                          fadeIn={ac.fadeIn || 0}
+                          fadeOut={ac.fadeOut || 0}
+                          speed={aSpeed}
+                        />
 
-                return (
-                  <div
-                    key={ac.id}
-                    onPointerDown={(e) => handleAudioClipDragStart(e, ac)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedClipId(null);
-                      setSelectedAudioClipId(ac.id);
-                      setActiveTab('audio');
-                    }}
-                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                    className={`absolute top-1 bottom-1 rounded-md overflow-hidden select-none cursor-grab active:cursor-grabbing group transition-shadow ${
-                      isSelected
-                        ? 'bg-emerald-950/90 border-2 border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.4)] z-10'
-                        : 'bg-gradient-to-r from-emerald-900/80 to-emerald-950/80 border border-emerald-500/60 hover:border-emerald-400'
-                    }`}
-                  >
-                    {/* Waveform + Volume Line + Fade Ramps */}
-                    <AudioClipWaveform
-                      url={ac.url}
-                      start={ac.start || 0}
-                      end={ac.end || ac.duration || aSourceDur}
-                      duration={ac.duration || aSourceDur}
-                      volume={ac.muted ? 0 : (ac.volume ?? 1)}
-                      fadeIn={ac.fadeIn || 0}
-                      fadeOut={ac.fadeOut || 0}
-                      speed={aSpeed}
-                    />
+                        <div
+                          onPointerDown={(e) => handleAudioTrimStart(e, ac, 'left')}
+                          title="Ajustar início do áudio"
+                          className="absolute left-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-l-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
+                        />
 
-                    {/* Left Trim Handle */}
-                    <div
-                      onPointerDown={(e) => handleAudioTrimStart(e, ac, 'left')}
-                      title="Ajustar início do áudio"
-                      className="absolute left-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-l-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
-                    />
+                        <div
+                          onPointerDown={(e) => handleAudioTrimStart(e, ac, 'right')}
+                          title="Ajustar fim do áudio"
+                          className="absolute right-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-r-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
+                        />
 
-                    {/* Right Trim Handle */}
-                    <div
-                      onPointerDown={(e) => handleAudioTrimStart(e, ac, 'right')}
-                      title="Ajustar fim do áudio"
-                      className="absolute right-0 top-0 bottom-0 w-2.5 bg-emerald-400/25 hover:bg-emerald-400/80 border-r-2 border-emerald-300/70 cursor-ew-resize z-20 transition"
-                    />
+                        <div className="relative z-10 h-full px-2.5 flex items-center justify-between gap-1 text-[10px] text-emerald-100 font-semibold pointer-events-none">
+                          <div className="flex items-center gap-1.5 truncate min-w-0">
+                            <Music className="w-3 h-3 text-emerald-300 shrink-0" />
+                            <span className="truncate drop-shadow">{ac.name || 'Áudio'}</span>
+                          </div>
 
-                    {/* Labels & Badges */}
-                    <div className="relative z-10 h-full px-2.5 flex items-center justify-between gap-1 text-[10px] text-emerald-100 font-semibold pointer-events-none">
-                      <div className="flex items-center gap-1.5 truncate min-w-0">
-                        <Music className="w-3 h-3 text-emerald-300 shrink-0" />
-                        <span className="truncate drop-shadow">{ac.name || 'Áudio'}</span>
+                          <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
+                            <span className="px-1 py-0.5 rounded bg-slate-950/75 text-amber-300 font-mono text-[8px]">
+                              {ac.muted ? '0%' : `${Math.round((ac.volume ?? 1) * 100)}%`}
+                            </span>
+                            {Math.abs(aSpeed - 1) > 0.01 && (
+                              <span className="px-1 py-0.5 rounded bg-slate-950/75 text-cyan-300 font-mono text-[8px]">
+                                {aSpeed.toFixed(1)}x
+                              </span>
+                            )}
+                            {(ac.fadeIn > 0 || ac.fadeOut > 0) && (
+                              <span className="px-1 py-0.5 rounded bg-slate-950/75 text-emerald-300 font-mono text-[8px]">
+                                F
+                              </span>
+                            )}
+                            <span className="font-mono text-emerald-300 text-[9px] hidden sm:inline">
+                              {aDur.toFixed(1)}s
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="flex items-center gap-1 shrink-0 pointer-events-auto">
-                        <span className="px-1 py-0.5 rounded bg-slate-950/75 text-amber-300 font-mono text-[8px]">
-                          {ac.muted ? '0%' : `${Math.round((ac.volume ?? 1) * 100)}%`}
-                        </span>
-                        {Math.abs(aSpeed - 1) > 0.01 && (
-                          <span className="px-1 py-0.5 rounded bg-slate-950/75 text-cyan-300 font-mono text-[8px]">
-                            {aSpeed.toFixed(1)}x
-                          </span>
-                        )}
-                        {(ac.fadeIn > 0 || ac.fadeOut > 0) && (
-                          <span className="px-1 py-0.5 rounded bg-slate-950/75 text-emerald-300 font-mono text-[8px]">
-                            F
-                          </span>
-                        )}
-                        <span className="font-mono text-emerald-300 text-[9px] hidden sm:inline">
-                          {aDur.toFixed(1)}s
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              });
-            })()}
+                    );
+                  })
+                )}
+              </div>
+            );
+          })}
+          <div
+            onClick={handleAddAudioTrack}
+            className="h-7 border-t border-slate-800/50 bg-slate-950/20 hover:bg-slate-900/40 flex items-center justify-center text-[10px] text-slate-500 hover:text-emerald-300 cursor-pointer transition shrink-0"
+          >
+            + Clique ou arraste um áudio para baixo para criar nova faixa de áudio
           </div>
 
           {/* Magnetic Snap Guide Vertical Line */}

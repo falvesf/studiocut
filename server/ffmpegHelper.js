@@ -502,6 +502,7 @@ export function executeRender({
   audioFadeIn = 0,
   audioFadeOut = 0,
   audioTrack = null,
+  audioTracks = [],
   audioClips = [],
   audioVolume = 1.0,
   audioLoop = false,
@@ -556,8 +557,11 @@ export function executeRender({
 
     let nextInputIdx = uniqueVideos.length;
 
-    // Active independent audio clips
-    const activeAudioClips = (audioClips || []).filter(ac => !ac.muted && ac.path && fs.existsSync(ac.path));
+    // Active independent audio clips (excluding muted clips and muted audio tracks)
+    const mutedAudioTrackIds = new Set((audioTracks || []).filter(t => t.muted === true).map(t => t.id));
+    const activeAudioClips = (audioClips || []).filter(
+      ac => !ac.muted && !mutedAudioTrackIds.has(ac.audioTrackId) && ac.path && fs.existsSync(ac.path)
+    );
 
     // Legacy audio input index if audioTrack exists and no audioClips
     let audioInputIdx = -1;

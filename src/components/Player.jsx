@@ -15,6 +15,131 @@ import {
   Layers
 } from 'lucide-react';
 
+function AudioTrackChannel({ track, clips, currentTime, isPlaying, audioVolume }) {
+  const audioRef = useRef(null);
+  const prevAudioClipIdRef = useRef(null);
+  const lastAudioSeekTimeRef = useRef(0);
+  const pendingAudioSyncRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const audioGainRef = useRef(null);
+
+  useEffect(() => {
+    const audioEl = audioRef.current;
+    if (!audioEl) return;
+
+    if (track?.muted) {
+      if (!audioEl.paused) audioEl.pause();
+      prevAudioClipIdRef.current = null;
+      return;
+    }
+
+    const activeAudio = clips.find((ac) => {
+      if (!ac?.url || ac.muted) return false;
+      const aStart = ac.timelineStart ?? 0;
+      const aDur = Math.max(0.05, (ac.end - ac.start) / (ac.speed || 1.0));
+      return currentTime >= aStart - 0.02 && currentTime <= aStart + aDur;
+    });
+
+    if (!activeAudio) {
+      if (!audioEl.paused) audioEl.pause();
+      prevAudioClipIdRef.current = null;
+      return;
+    }
+
+    if (audioEl.dataset.srcUrl !== activeAudio.url) {
+      audioEl.dataset.srcUrl = activeAudio.url;
+      audioEl.src = activeAudio.url;
+      audioEl.load();
+    }
+
+    const speed = activeAudio.speed || 1.0;
+    audioEl.preservesPitch = true;
+    if (Math.abs(audioEl.playbackRate - speed) > 0.01) {
+      audioEl.playbackRate = speed;
+    }
+
+    const aStart = activeAudio.timelineStart ?? 0;
+    const aDur = Math.max(0.05, (activeAudio.end - activeAudio.start) / speed);
+    const elapsedInClip = Math.max(0, currentTime - aStart);
+    const targetSrcTime = activeAudio.start + elapsedInClip * speed;
+    const drift = Math.abs(audioEl.currentTime - targetSrcTime);
+    const isNewAudio = prevAudioClipIdRef.current !== activeAudio.id;
+    prevAudioClipIdRef.current = activeAudio.id;
+    pendingAudioSyncRef.current = { targetSrcTime, speed };
+
+    const nowMs = Date.now();
+    const shouldSeek = isNewAudio || !isPlaying || (drift > 0.45 && nowMs - lastAudioSeekTimeRef.current > 450);
+    if (audioEl.readyState >= 1 && !audioEl.seeking && shouldSeek) {
+      try {
+        audioEl.currentTime = targetSrcTime;
+        lastAudioSeekTimeRef.current = nowMs;
+      } catch (e) {}
+    }
+
+    let vol = activeAudio.volume !== undefined ? activeAudio.volume : audioVolume;
+    const fIn = activeAudio.fadeIn || 0;
+    const fOut = activeAudio.fadeOut || 0;
+    if (fIn > 0 && elapsedInClip < fIn) {
+      vol *= Math.max(0, elapsedInClip / fIn);
+    }
+    const remainingInClip = Math.max(0, aDur - elapsedInClip);
+    if (fOut > 0 && remainingInClip < fOut) {
+      vol *= Math.max(0, remainingInClip / fOut);
+    }
+    const clampedGain = Math.min(2, Math.max(0, vol));
+
+    if (audioGainRef.current) {
+      audioGainRef.current.gain.value = clampedGain;
+      audioEl.volume = 1;
+    } else {
+      audioEl.volume = Math.min(1, clampedGain);
+    }
+
+    if (isPlaying && audioEl.paused) {
+      if (!audioCtxRef.current) {
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          const ctx = new Ctx();
+          const source = ctx.createMediaElementSource(audioEl);
+          const gain = ctx.createGain();
+          gain.gain.value = clampedGain;
+          source.connect(gain);
+          gain.connect(ctx.destination);
+          audioCtxRef.current = ctx;
+          audioGainRef.current = gain;
+          audioEl.volume = 1;
+        } catch (e) {}
+      } else if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      audioEl.play().catch(() => {});
+    } else if (!isPlaying && !audioEl.paused) {
+      audioEl.pause();
+    }
+  }, [currentTime, isPlaying, clips, track?.muted, audioVolume]);
+
+  return (
+    <audio
+      ref={audioRef}
+      data-track-audio="true"
+      className="hidden"
+      preload="auto"
+      onLoadedMetadata={(e) => {
+        const el = e.currentTarget;
+        const pending = pendingAudioSyncRef.current;
+        if (pending) {
+          el.preservesPitch = true;
+          el.playbackRate = pending.speed || 1.0;
+          try {
+            el.currentTime = pending.targetSrcTime || 0;
+            lastAudioSeekTimeRef.current = Date.now();
+          } catch (err) {}
+        }
+      }}
+    />
+  );
+}
+
 export default function Player({
   videoUrl,
   currentTime,
@@ -33,6 +158,7 @@ export default function Player({
   logoOverlay = null,
   backgroundLayer = null,
   audioClips = [],
+  audioTracks = [{ id: 'atrack_1', name: 'Áudio 1', muted: false, locked: false }],
   audioTrack = null,
   audioVolume = 1.0
 }) {
@@ -40,12 +166,6 @@ export default function Player({
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const containerRef = useRef(null);
   const prevClipIdRef = useRef(null);
-  const bgAudioRef = useRef(null);
-  const prevAudioClipIdRef = useRef(null);
-  const lastAudioSeekTimeRef = useRef(0);
-  const pendingAudioSyncRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const audioGainRef = useRef(null);
 
   // Auto-detect aspect ratio from video dimensions
   const isVideoVertical = videoInfo?.height > videoInfo?.width;
@@ -189,111 +309,21 @@ export default function Player({
     }
   }, [currentTime, isPlaying, activeClip?.id, activeClip?.videoUrl, activeClip?.muted, activeClip?.audioExtracted, activeClip?.volume, activeClip?.fadeIn, activeClip?.fadeOut, muteOriginal]);
 
-  // Synchronize Independent Audio Track (audioClips / audioTrack) with Playback, Speed & Fades
-  useEffect(() => {
-    const audioEl = bgAudioRef.current;
-    if (!audioEl) return;
-
-    const effectiveAudioList = audioClips.length > 0
-      ? audioClips
-      : (audioTrack?.url ? [{
-          id: 'legacy_audio_track',
-          url: audioTrack.url,
-          start: 0,
-          end: audioTrack.duration || duration || 10,
-          timelineStart: audioTrack.timelineStart || 0,
-          speed: 1.0,
-          volume: audioVolume,
-          fadeIn: 0,
-          fadeOut: 0,
-          muted: false
-        }] : []);
-
-    const activeAudio = effectiveAudioList.find((ac) => {
-      if (!ac?.url || ac.muted) return false;
-      const aStart = ac.timelineStart ?? 0;
-      const aDur = Math.max(0.05, (ac.end - ac.start) / (ac.speed || 1.0));
-      return currentTime >= aStart - 0.02 && currentTime <= aStart + aDur;
-    });
-
-    if (!activeAudio) {
-      if (!audioEl.paused) audioEl.pause();
-      prevAudioClipIdRef.current = null;
-      return;
-    }
-
-    if (audioEl.dataset.srcUrl !== activeAudio.url) {
-      audioEl.dataset.srcUrl = activeAudio.url;
-      audioEl.src = activeAudio.url;
-      audioEl.load();
-    }
-
-    const speed = activeAudio.speed || 1.0;
-    audioEl.preservesPitch = true;
-    if (Math.abs(audioEl.playbackRate - speed) > 0.01) {
-      audioEl.playbackRate = speed;
-    }
-
-    const aStart = activeAudio.timelineStart ?? 0;
-    const aDur = Math.max(0.05, (activeAudio.end - activeAudio.start) / speed);
-    const elapsedInClip = Math.max(0, currentTime - aStart);
-    const targetSrcTime = activeAudio.start + elapsedInClip * speed;
-    const drift = Math.abs(audioEl.currentTime - targetSrcTime);
-    const isNewAudio = prevAudioClipIdRef.current !== activeAudio.id;
-    prevAudioClipIdRef.current = activeAudio.id;
-    pendingAudioSyncRef.current = { targetSrcTime, speed };
-
-    const nowMs = Date.now();
-    const shouldSeek = isNewAudio || !isPlaying || (drift > 0.45 && nowMs - lastAudioSeekTimeRef.current > 450);
-    if (audioEl.readyState >= 1 && !audioEl.seeking && shouldSeek) {
-      try {
-        audioEl.currentTime = targetSrcTime;
-        lastAudioSeekTimeRef.current = nowMs;
-      } catch (e) {}
-    }
-
-    // Dynamic volume (supports 0%..200% via Web Audio GainNode) with Fade In & Fade Out
-    let vol = activeAudio.volume !== undefined ? activeAudio.volume : audioVolume;
-    const fIn = activeAudio.fadeIn || 0;
-    const fOut = activeAudio.fadeOut || 0;
-    if (fIn > 0 && elapsedInClip < fIn) {
-      vol *= Math.max(0, elapsedInClip / fIn);
-    }
-    const remainingInClip = Math.max(0, aDur - elapsedInClip);
-    if (fOut > 0 && remainingInClip < fOut) {
-      vol *= Math.max(0, remainingInClip / fOut);
-    }
-    const clampedGain = Math.min(2, Math.max(0, vol));
-
-    if (audioGainRef.current) {
-      audioGainRef.current.gain.value = clampedGain;
-      audioEl.volume = 1;
-    } else {
-      audioEl.volume = Math.min(1, clampedGain);
-    }
-
-    if (isPlaying && audioEl.paused) {
-      if (!audioCtxRef.current) {
-        try {
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          const ctx = new Ctx();
-          const source = ctx.createMediaElementSource(audioEl);
-          const gain = ctx.createGain();
-          gain.gain.value = clampedGain;
-          source.connect(gain);
-          gain.connect(ctx.destination);
-          audioCtxRef.current = ctx;
-          audioGainRef.current = gain;
-          audioEl.volume = 1;
-        } catch (e) {}
-      } else if (audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume().catch(() => {});
-      }
-      audioEl.play().catch(() => {});
-    } else if (!isPlaying && !audioEl.paused) {
-      audioEl.pause();
-    }
-  }, [currentTime, isPlaying, audioClips, audioTrack, audioVolume, duration]);
+  const effectiveAudioList = audioClips.length > 0
+    ? audioClips
+    : (audioTrack?.url ? [{
+        id: 'legacy_audio_track',
+        audioTrackId: audioTracks[0]?.id || 'atrack_1',
+        url: audioTrack.url,
+        start: 0,
+        end: audioTrack.duration || duration || 10,
+        timelineStart: audioTrack.timelineStart || 0,
+        speed: 1.0,
+        volume: audioVolume,
+        fadeIn: 0,
+        fadeOut: 0,
+        muted: false
+      }] : []);
 
   const togglePlay = (e) => {
     if (e) e.stopPropagation();
@@ -302,16 +332,20 @@ export default function Player({
     if (isPlaying) {
       setIsPlaying(false);
       videoRef.current.pause();
-      if (bgAudioRef.current) bgAudioRef.current.pause();
+      document.querySelectorAll('audio[data-track-audio="true"]').forEach(el => {
+        try { el.pause(); } catch {}
+      });
     } else {
       if (currentTime >= duration - 0.1 && duration > 0) {
         setCurrentTime(0);
       }
       setIsPlaying(true);
       videoRef.current.play().catch(() => {});
-      if (bgAudioRef.current && bgAudioRef.current.src) {
-        bgAudioRef.current.play().catch(() => {});
-      }
+      document.querySelectorAll('audio[data-track-audio="true"]').forEach(el => {
+        if (el.src) {
+          try { el.play().catch(() => {}); } catch {}
+        }
+      });
     }
   };
 
@@ -504,23 +538,16 @@ export default function Player({
       className="relative flex-1 flex flex-col bg-[#090b10] overflow-hidden p-3 select-none"
     >
       {/* Hidden Independent Audio Track Player */}
-      <audio
-        ref={bgAudioRef}
-        className="hidden"
-        preload="auto"
-        onLoadedMetadata={(e) => {
-          const el = e.currentTarget;
-          const pending = pendingAudioSyncRef.current;
-          if (pending) {
-            el.preservesPitch = true;
-            el.playbackRate = pending.speed || 1.0;
-            try {
-              el.currentTime = pending.targetSrcTime || 0;
-              lastAudioSeekTimeRef.current = Date.now();
-            } catch (err) {}
-          }
-        }}
-      />
+      {(audioTracks.length > 0 ? audioTracks : [{ id: 'atrack_1', name: 'Áudio 1', muted: false }]).map((tr, idx) => (
+        <AudioTrackChannel
+          key={tr.id}
+          track={tr}
+          clips={effectiveAudioList.filter(ac => (ac.audioTrackId || (audioTracks[0]?.id || 'atrack_1')) === tr.id || (idx === 0 && !ac.audioTrackId))}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          audioVolume={audioVolume}
+        />
+      ))}
 
       {/* Real-time Hardware Video Sharpening Convolution Filters */}
       <svg className="absolute w-0 h-0 pointer-events-none opacity-0" aria-hidden="true">
