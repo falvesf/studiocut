@@ -117,62 +117,217 @@ export default function App() {
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
 
-  // Undo / Redo History System (Ctrl+Z / Ctrl+Y)
+  // Universal Undo / Redo History System (Ctrl+Z / Ctrl+Y)
   const historyRef = useRef([]);
   const historyIndexRef = useRef(-1);
   const isUndoRedoAction = useRef(false);
+  const lastCommittedCoreRef = useRef(null);
+  const undoDebounceRef = useRef(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  const pushHistorySnapshot = (newClips, newTracks, newSelectedId) => {
+  const buildUndoState = (overrides = {}) => ({
+    tracks: overrides.tracks !== undefined ? overrides.tracks : tracks,
+    clips: overrides.clips !== undefined ? overrides.clips : clips,
+    selectedClipId: overrides.selectedClipId !== undefined ? overrides.selectedClipId : selectedClipId,
+    audioTracks: overrides.audioTracks !== undefined ? overrides.audioTracks : audioTracks,
+    audioClips: overrides.audioClips !== undefined ? overrides.audioClips : audioClips,
+    audioTrack: overrides.audioTrack !== undefined ? overrides.audioTrack : audioTrack,
+    selectedAudioClipId: overrides.selectedAudioClipId !== undefined ? overrides.selectedAudioClipId : selectedAudioClipId,
+    targetAspect: overrides.targetAspect !== undefined ? overrides.targetAspect : targetAspect,
+    backgroundLayer: overrides.backgroundLayer !== undefined ? overrides.backgroundLayer : backgroundLayer,
+    logoOverlay: overrides.logoOverlay !== undefined ? overrides.logoOverlay : logoOverlay,
+    muteOriginal: overrides.muteOriginal !== undefined ? overrides.muteOriginal : muteOriginal,
+    originalVolume: overrides.originalVolume !== undefined ? overrides.originalVolume : originalVolume,
+    audioFadeIn: overrides.audioFadeIn !== undefined ? overrides.audioFadeIn : audioFadeIn,
+    audioFadeOut: overrides.audioFadeOut !== undefined ? overrides.audioFadeOut : audioFadeOut,
+    audioVolume: overrides.audioVolume !== undefined ? overrides.audioVolume : audioVolume,
+    audioLoop: overrides.audioLoop !== undefined ? overrides.audioLoop : audioLoop,
+    enhancement: overrides.enhancement !== undefined ? overrides.enhancement : enhancement,
+    verticalAspect: overrides.verticalAspect !== undefined ? overrides.verticalAspect : verticalAspect,
+    transitions: overrides.transitions !== undefined ? overrides.transitions : transitions,
+    subtitles: overrides.subtitles !== undefined ? overrides.subtitles : subtitles,
+    subtitleStyle: overrides.subtitleStyle !== undefined ? overrides.subtitleStyle : subtitleStyle,
+    silences: overrides.silences !== undefined ? overrides.silences : silences
+  });
+
+  const latestUndoStateRef = useRef(null);
+  latestUndoStateRef.current = buildUndoState();
+
+  const serializeUndoCore = (stateObj) => JSON.stringify({
+    tracks: stateObj.tracks,
+    clips: stateObj.clips,
+    audioTracks: stateObj.audioTracks,
+    audioClips: stateObj.audioClips,
+    audioTrack: stateObj.audioTrack,
+    targetAspect: stateObj.targetAspect,
+    backgroundLayer: stateObj.backgroundLayer,
+    logoOverlay: stateObj.logoOverlay,
+    muteOriginal: stateObj.muteOriginal,
+    originalVolume: stateObj.originalVolume,
+    audioFadeIn: stateObj.audioFadeIn,
+    audioFadeOut: stateObj.audioFadeOut,
+    audioVolume: stateObj.audioVolume,
+    audioLoop: stateObj.audioLoop,
+    enhancement: stateObj.enhancement,
+    verticalAspect: stateObj.verticalAspect,
+    transitions: stateObj.transitions,
+    subtitles: stateObj.subtitles,
+    subtitleStyle: stateObj.subtitleStyle,
+    silences: stateObj.silences
+  });
+
+  const commitUndoState = (stateObj) => {
     if (isUndoRedoAction.current) return;
-    const currentClips = newClips || clips;
-    const currentTracks = newTracks || tracks;
-    const currentSelectedId = newSelectedId || selectedClipId;
+    const coreStr = serializeUndoCore(stateObj);
+    if (coreStr === lastCommittedCoreRef.current) return;
 
-    const snapshot = {
-      clips: JSON.parse(JSON.stringify(currentClips)),
-      tracks: JSON.parse(JSON.stringify(currentTracks)),
-      selectedClipId: currentSelectedId
-    };
-
+    const cloned = JSON.parse(JSON.stringify(stateObj));
     const truncated = historyRef.current.slice(0, historyIndexRef.current + 1);
-    truncated.push(snapshot);
+    truncated.push(cloned);
     if (truncated.length > 60) truncated.shift();
 
     historyRef.current = truncated;
     historyIndexRef.current = truncated.length - 1;
+    lastCommittedCoreRef.current = coreStr;
     setCanUndo(historyIndexRef.current > 0);
     setCanRedo(false);
   };
 
+  const resetHistory = (initialState) => {
+    if (undoDebounceRef.current) {
+      clearTimeout(undoDebounceRef.current);
+      undoDebounceRef.current = null;
+    }
+    isUndoRedoAction.current = true;
+    const cloned = JSON.parse(JSON.stringify(initialState));
+    historyRef.current = [cloned];
+    historyIndexRef.current = 0;
+    lastCommittedCoreRef.current = serializeUndoCore(cloned);
+    setCanUndo(false);
+    setCanRedo(false);
+    setTimeout(() => { isUndoRedoAction.current = false; }, 100);
+  };
+
+  const pushHistorySnapshot = (newClips, newTracks, newSelectedId, extraOverrides = {}) => {
+    if (isUndoRedoAction.current) return;
+    if (undoDebounceRef.current) {
+      clearTimeout(undoDebounceRef.current);
+      undoDebounceRef.current = null;
+    }
+    const base = latestUndoStateRef.current || buildUndoState();
+    const stateObj = {
+      ...base,
+      ...extraOverrides,
+      clips: newClips || base.clips,
+      tracks: newTracks || base.tracks,
+      selectedClipId: newSelectedId !== undefined ? newSelectedId : base.selectedClipId
+    };
+    commitUndoState(stateObj);
+  };
+
+  const applyUndoSnapshot = (targetState) => {
+    if (!targetState) return;
+    if (undoDebounceRef.current) {
+      clearTimeout(undoDebounceRef.current);
+      undoDebounceRef.current = null;
+    }
+    isUndoRedoAction.current = true;
+    lastCommittedCoreRef.current = serializeUndoCore(targetState);
+    setTracks(JSON.parse(JSON.stringify(targetState.tracks || [{ id: 'track_1', name: 'Faixa 1', visible: true, muted: false, locked: false }])));
+    setClips(JSON.parse(JSON.stringify(targetState.clips || [])));
+    setSelectedClipId(targetState.selectedClipId || null);
+    setAudioTracks(JSON.parse(JSON.stringify(targetState.audioTracks || [{ id: 'atrack_1', name: 'Áudio 1', muted: false, locked: false }])));
+    setAudioClips(JSON.parse(JSON.stringify(targetState.audioClips || [])));
+    setAudioTrack(targetState.audioTrack ? JSON.parse(JSON.stringify(targetState.audioTrack)) : null);
+    setSelectedAudioClipId(targetState.selectedAudioClipId || null);
+    setTargetAspect(targetState.targetAspect || 'auto');
+    setBackgroundLayer(targetState.backgroundLayer ? JSON.parse(JSON.stringify(targetState.backgroundLayer)) : null);
+    setLogoOverlay(JSON.parse(JSON.stringify(targetState.logoOverlay || { enabled: false, path: '', url: '', name: '', position: 'top-right', scale: 15, opacity: 100 })));
+    setMuteOriginal(Boolean(targetState.muteOriginal));
+    setOriginalVolume(targetState.originalVolume !== undefined ? Number(targetState.originalVolume) : 1.0);
+    setAudioFadeIn(Number(targetState.audioFadeIn) || 0);
+    setAudioFadeOut(Number(targetState.audioFadeOut) || 0);
+    setAudioVolume(targetState.audioVolume !== undefined ? Number(targetState.audioVolume) : 1.0);
+    setAudioLoop(Boolean(targetState.audioLoop));
+    setEnhancement(targetState.enhancement || 'none');
+    setVerticalAspect(Boolean(targetState.verticalAspect));
+    setTransitions(JSON.parse(JSON.stringify(targetState.transitions || { fadeIn: 0, fadeOut: 0 })));
+    setSubtitles(JSON.parse(JSON.stringify(targetState.subtitles || [])));
+    setSubtitleStyle(JSON.parse(JSON.stringify(targetState.subtitleStyle || { color: '#FACC15', fontSize: 22, bold: true })));
+    setSilences(JSON.parse(JSON.stringify(targetState.silences || [])));
+    setCanUndo(historyIndexRef.current > 0);
+    setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
+    setTimeout(() => { isUndoRedoAction.current = false; }, 100);
+  };
+
   const undo = () => {
+    if (undoDebounceRef.current && latestUndoStateRef.current) {
+      clearTimeout(undoDebounceRef.current);
+      undoDebounceRef.current = null;
+      commitUndoState(latestUndoStateRef.current);
+    }
     if (historyIndexRef.current > 0) {
-      isUndoRedoAction.current = true;
       historyIndexRef.current -= 1;
-      const targetState = historyRef.current[historyIndexRef.current];
-      setClips(JSON.parse(JSON.stringify(targetState.clips)));
-      setTracks(JSON.parse(JSON.stringify(targetState.tracks)));
-      if (targetState.selectedClipId) setSelectedClipId(targetState.selectedClipId);
-      setCanUndo(historyIndexRef.current > 0);
-      setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
-      setTimeout(() => { isUndoRedoAction.current = false; }, 60);
+      applyUndoSnapshot(historyRef.current[historyIndexRef.current]);
     }
   };
 
   const redo = () => {
     if (historyIndexRef.current < historyRef.current.length - 1) {
-      isUndoRedoAction.current = true;
       historyIndexRef.current += 1;
-      const targetState = historyRef.current[historyIndexRef.current];
-      setClips(JSON.parse(JSON.stringify(targetState.clips)));
-      setTracks(JSON.parse(JSON.stringify(targetState.tracks)));
-      if (targetState.selectedClipId) setSelectedClipId(targetState.selectedClipId);
-      setCanUndo(historyIndexRef.current > 0);
-      setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
-      setTimeout(() => { isUndoRedoAction.current = false; }, 60);
+      applyUndoSnapshot(historyRef.current[historyIndexRef.current]);
     }
   };
+
+  // Automatically record undo snapshots for any state mutation across all panels
+  useEffect(() => {
+    if (isUndoRedoAction.current) return;
+    if (historyRef.current.length === 0) {
+      const initial = latestUndoStateRef.current;
+      const cloned = JSON.parse(JSON.stringify(initial));
+      historyRef.current = [cloned];
+      historyIndexRef.current = 0;
+      lastCommittedCoreRef.current = serializeUndoCore(cloned);
+      setCanUndo(false);
+      setCanRedo(false);
+      return;
+    }
+    if (undoDebounceRef.current) clearTimeout(undoDebounceRef.current);
+    undoDebounceRef.current = setTimeout(() => {
+      undoDebounceRef.current = null;
+      if (latestUndoStateRef.current) {
+        commitUndoState(latestUndoStateRef.current);
+      }
+    }, 220);
+    return () => {
+      if (undoDebounceRef.current) {
+        clearTimeout(undoDebounceRef.current);
+        undoDebounceRef.current = null;
+      }
+    };
+  }, [
+    tracks,
+    clips,
+    audioTracks,
+    audioClips,
+    audioTrack,
+    targetAspect,
+    backgroundLayer,
+    logoOverlay,
+    muteOriginal,
+    originalVolume,
+    audioFadeIn,
+    audioFadeOut,
+    audioVolume,
+    audioLoop,
+    enhancement,
+    verticalAspect,
+    transitions,
+    subtitles,
+    subtitleStyle,
+    silences
+  ]);
 
   // ============================================================
   // PROJECT SNAPSHOT, AUTO-SAVE & RECOVERY
@@ -263,18 +418,54 @@ export default function App() {
     const loadedAudioTracks = Array.isArray(data.audioTracks) && data.audioTracks.length > 0
       ? data.audioTracks
       : [{ id: 'atrack_1', name: 'Áudio 1', muted: false, locked: false }];
+    const normalizedAudioClips = loadedAudioClips.map(ac => ({ ...ac, audioTrackId: ac.audioTrackId || loadedAudioTracks[0].id }));
+    const nextSelectedAudioId = data.selectedAudioClipId || normalizedAudioClips[0]?.id || null;
+    const nextAudioVolume = data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0;
+    const nextAudioLoop = Boolean(data.audioLoop);
+    const nextEnhancement = data.enhancement || 'none';
+    const nextVerticalAspect = Boolean(data.verticalAspect);
+    const nextTransitions = data.transitions || { fadeIn: 0, fadeOut: 0 };
+    const nextSubtitles = Array.isArray(data.subtitles) ? data.subtitles : [];
+    const nextSubtitleStyle = data.subtitleStyle || { color: '#FACC15', fontSize: 22, bold: true };
+    const nextSilences = Array.isArray(data.silences) ? data.silences : [];
+
     setAudioTracks(loadedAudioTracks);
     setAudioTrack(loadedAudioTrack);
-    setAudioClips(loadedAudioClips.map(ac => ({ ...ac, audioTrackId: ac.audioTrackId || loadedAudioTracks[0].id })));
-    setSelectedAudioClipId(data.selectedAudioClipId || loadedAudioClips[0]?.id || null);
-    setAudioVolume(data.audioVolume !== undefined ? Number(data.audioVolume) : 1.0);
-    setAudioLoop(Boolean(data.audioLoop));
-    setEnhancement(data.enhancement || 'none');
-    setVerticalAspect(Boolean(data.verticalAspect));
-    setTransitions(data.transitions || { fadeIn: 0, fadeOut: 0 });
-    setSubtitles(Array.isArray(data.subtitles) ? data.subtitles : []);
-    setSubtitleStyle(data.subtitleStyle || { color: '#FACC15', fontSize: 22, bold: true });
-    setSilences(Array.isArray(data.silences) ? data.silences : []);
+    setAudioClips(normalizedAudioClips);
+    setSelectedAudioClipId(nextSelectedAudioId);
+    setAudioVolume(nextAudioVolume);
+    setAudioLoop(nextAudioLoop);
+    setEnhancement(nextEnhancement);
+    setVerticalAspect(nextVerticalAspect);
+    setTransitions(nextTransitions);
+    setSubtitles(nextSubtitles);
+    setSubtitleStyle(nextSubtitleStyle);
+    setSilences(nextSilences);
+
+    resetHistory({
+      tracks: Array.isArray(data.tracks) && data.tracks.length > 0 ? data.tracks : [{ id: 'track_1', name: 'Faixa 1', visible: true, muted: false, locked: false }],
+      clips: Array.isArray(data.clips) ? data.clips : [],
+      selectedClipId: data.selectedClipId || (Array.isArray(data.clips) && data.clips[0]?.id) || null,
+      audioTracks: loadedAudioTracks,
+      audioClips: normalizedAudioClips,
+      audioTrack: loadedAudioTrack,
+      selectedAudioClipId: nextSelectedAudioId,
+      targetAspect: data.targetAspect || 'auto',
+      backgroundLayer: data.backgroundLayer || null,
+      logoOverlay: data.logoOverlay || { enabled: false, path: '', url: '', name: '', position: 'top-right', scale: 15, opacity: 100 },
+      muteOriginal: Boolean(data.muteOriginal),
+      originalVolume: data.originalVolume !== undefined ? Number(data.originalVolume) : 1.0,
+      audioFadeIn: Number(data.audioFadeIn) || 0,
+      audioFadeOut: Number(data.audioFadeOut) || 0,
+      audioVolume: nextAudioVolume,
+      audioLoop: nextAudioLoop,
+      enhancement: nextEnhancement,
+      verticalAspect: nextVerticalAspect,
+      transitions: nextTransitions,
+      subtitles: nextSubtitles,
+      subtitleStyle: nextSubtitleStyle,
+      silences: nextSilences
+    });
   };
 
   const handleSaveProject = async (nameToSave, existingId = null) => {

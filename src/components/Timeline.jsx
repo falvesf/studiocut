@@ -246,9 +246,14 @@ export default function Timeline({
   };
 
   const handleAddAudioTrack = () => {
+    const existingNums = audioTracks.map(t => {
+      const m = String(t.name || '').match(/(\d+)/);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    const nextNum = Math.max(audioTracks.length, ...existingNums, 0) + 1;
     const newTrack = {
-      id: `atrack_${Date.now()}`,
-      name: `Áudio ${audioTracks.length + 1}`,
+      id: `atrack_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: `Áudio ${nextNum}`,
       muted: false,
       locked: false
     };
@@ -265,14 +270,27 @@ export default function Timeline({
       showAlert('Mantenha pelo menos 1 faixa de áudio.');
       return;
     }
-    const hasClips = audioClips.some(ac => (ac.audioTrackId || audioTracks[0]?.id) === trackId);
-    if (hasClips) {
-      const ok = await showConfirm('Excluir esta faixa de áudio e todos os trechos nela?');
+    const targetTrack = audioTracks.find(t => t.id === trackId);
+    if (!targetTrack) return;
+    const fallbackTrackId = audioTracks[0]?.id;
+    const clipsInTrack = audioClips.filter(ac => (ac.audioTrackId || fallbackTrackId) === trackId);
+    if (clipsInTrack.length > 0) {
+      const ok = await showConfirm(
+        `Excluir a faixa "${targetTrack.name || 'Áudio'}" e os ${clipsInTrack.length} trecho(s) de áudio nela?`
+      );
       if (!ok) return;
     }
     const nextTracks = audioTracks.filter(t => t.id !== trackId);
+    const nextFallbackId = nextTracks[0]?.id || 'atrack_1';
+    const nextAudioClips = audioClips
+      .filter(ac => (ac.audioTrackId || fallbackTrackId) !== trackId)
+      .map(ac => (ac.audioTrackId ? ac : { ...ac, audioTrackId: nextFallbackId }));
     setAudioTracks(nextTracks);
-    setAudioClips(prev => prev.filter(ac => (ac.audioTrackId || audioTracks[0]?.id) !== trackId));
+    setAudioClips(nextAudioClips);
+    pushHistorySnapshot(clips, tracks, selectedClipId, {
+      audioTracks: nextTracks,
+      audioClips: nextAudioClips
+    });
   };
 
   // Drag horizontally (timelineStart) and vertically (between audioTracks) for audio clips
@@ -1380,7 +1398,7 @@ export default function Timeline({
                         handleDeleteAudioTrack(aTrack.id);
                       }}
                       className="p-1 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
-                      title="Excluir faixa de áudio"
+                      title={`Excluir ${aTrack.name || `Áudio ${aIdx + 1}`}`}
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
